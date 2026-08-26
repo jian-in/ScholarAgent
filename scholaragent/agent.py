@@ -10,6 +10,7 @@ max_steps 是保险丝:防止模型陷入"无限调工具"的死循环,
 把 API 费用烧光。这是所有 Agent 框架都有的标配防护。
 """
 
+from . import config
 from .llm import assistant_message
 from .metrics import MetricsCollector
 from .tool import STOP_RETRY_PREFIX
@@ -21,6 +22,9 @@ DEFAULT_SYSTEM_PROMPT = (
 
 # 协作式取消:在下一步边界抛出,让工作台能干净收尾
 CANCELLED_ANSWER = "(任务已取消)"
+
+# 旧工具结果被压缩后打上的标记(判断"已压缩过"就靠它,保证幂等)
+COMPRESSED_MARK = "较早的工具结果已压缩"
 
 
 class JobCancelled(Exception):
@@ -94,7 +98,10 @@ class Agent:
                 self._log("[取消] 用户已请求停止,在下一步边界退出")
                 answer = CANCELLED_ANSWER
                 break
-            # ① 思考:把完整对话历史 + 工具清单交给模型
+            # ① 思考:把完整对话历史 + 工具清单交给模型。
+            # 发送前先压缩较早的工具结果:它们每一步都被整段重发,
+            # 是 prompt token 的最大浪费(尤其 read_paper 的论文原文)
+            self._compress_history(messages)
             reply = self.llm.chat(
                 messages, tools=self.tools.schemas(exclude=disabled_tools))
             metrics.record_llm_call(reply.get("usage"))
@@ -185,6 +192,40 @@ class Agent:
             self.conversation.save(messages)
         self.last_metrics = metrics.finish(self.tools.run_tool_calls)
         return answer
+
+    def _compress_history(self, messages: list):
+        """把较早的工具结果原地压缩成"保头 + 保尾"的短摘要。
+
+        每一步循环都会把整个历史重发给模型,一条 6000 字符的论文片段
+        读完后还要在后续每一步重复计费。最近几条保持原文(模型正要
+        用它继续阅读/引用),更早的压到预算内 —— 消息只改内容、
+        不删不重排,tool_call_id 配对保持完整,API 不会报错。
+        压缩原地生效,因此写回会话记忆的也是压缩后历史。
+        """
+        limit = config.AGENT_CONTEXT_OLD_OBSERVATION_CHARS
+        if limit <= 0:
+            return  # 显式关闭
+        keep_recent = config.AGENT_CONTEXT_RECENT_OBSERVATIONS
+        tool_indices = [
+            i for i, m in enumerate(messages) if m.get("role") == "tool"]
+        if keep_recent > 0:
+            tool_indices = tool_indices[:-keep_recent]
+        compressed, saved_chars = 0, 0
+        for i in tool_indices:
+            content = messages[i].get("content")
+            if (not isinstance(content, str) or len(content) <= limit
+                    or COMPRESSED_MARK in content):
+                continue  # 短消息、已压缩过的,都不动
+            head, tail = int(limit * 0.6), int(limit * 0.3)
+            messages[i]["content"] = (
+                f"{content[:head]}\n…({COMPRESSED_MARK},"
+                "完整原文可在需要时重新调用工具获取,"
+                f"关键结论应已存入笔记)…\n{content[-tail:]}")
+            compressed += 1
+            saved_chars += len(content) - len(messages[i]["content"])
+        if compressed:
+            self._log(f"[上下文] 已压缩 {compressed} 条较早的工具结果"
+                      f"(约省 {saved_chars} 字符)")
 
     def _stop_requested(self) -> bool:
         if not self.should_stop:

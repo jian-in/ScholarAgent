@@ -8,6 +8,10 @@
 
 ### 新增
 
+- 上下文成本控制:Agent 循环发送前自动压缩较早的工具结果(最近 2 条保持
+  原文,更早的压到约 600 字符,保头保尾),三种执行模式同时受益;可经
+  `AGENT_CONTEXT_*` 环境变量调整或关闭。离线实测 9 步读论文任务的总发送
+  字符量降至 50% 以下(见 `tests/test_context_compression.py`)。
 - 开源治理配套：Issue / PR 模板、GitHub Actions CI（双系统离线测试）、
   行为准则（CODE_OF_CONDUCT）、维护说明（MAINTAINERS）、路线图（docs/ROADMAP.md）。
 - 五分钟演示指南（docs/demo-guide.md）与参赛材料文字稿（docs/contest/）。

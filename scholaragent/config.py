@@ -35,11 +35,28 @@ def _positive_int(name: str, default: int) -> int:
     return value if value > 0 else default
 
 
+def _nonnegative_int(name: str, default: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+    return value if value >= 0 else default
+
+
 # 长论文仍按块读取,但会话与角色交接需要有足够空间保留前文。
 CONVERSATION_MAX_CHARS = _positive_int("CONVERSATION_MAX_CHARS", 60000)
 TEAM_HANDOFF_MAX_CHARS = _positive_int("TEAM_HANDOFF_MAX_CHARS", 12000)
 PAPER_READER_CHUNK_CHARS = _positive_int("PAPER_READER_CHUNK_CHARS", 6000)
 PAPER_READER_MAX_STEPS = _positive_int("PAPER_READER_MAX_STEPS", 48)
+
+# 上下文压缩:Agent 循环每一步都会把完整历史重发给模型,旧工具结果
+# (尤其 read_paper 的论文原文)反复重发是 prompt token 的最大浪费。
+# 最近 RECENT 条工具结果保留原文,更早的压到 OLD_CHARS 字符(保头保尾);
+# OLD_CHARS 设为 0 可完全关闭压缩。
+AGENT_CONTEXT_RECENT_OBSERVATIONS = _positive_int(
+    "AGENT_CONTEXT_RECENT_OBSERVATIONS", 2)
+AGENT_CONTEXT_OLD_OBSERVATION_CHARS = _nonnegative_int(
+    "AGENT_CONTEXT_OLD_OBSERVATION_CHARS", 600)
 
 
 def _nonnegative_float(name: str, default: float) -> float:
