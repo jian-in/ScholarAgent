@@ -105,3 +105,62 @@ def test_readme_exposes_reproducible_evidence_and_project_boundaries() -> None:
         "SECURITY.md",
     ):
         assert required_text in readme
+
+
+def test_public_case_bundles_are_valid_and_sanitized() -> None:
+    """已发布的案例证据包必须可解析、路径可移植、评分完整且无路径泄漏。"""
+    import json
+    import re
+
+    bundles = sorted(
+        path for path in (PROJECT_ROOT / "evals" / "case_results").iterdir()
+        if path.is_dir()
+    )
+    assert bundles, "公开案例目录 evals/case_results/ 至少需要一个证据包"
+
+    for bundle in bundles:
+        runs = bundle / "runs.jsonl"
+        assert runs.is_file(), f"{runs.relative_to(PROJECT_ROOT)} 缺失"
+        rows = [
+            json.loads(line)
+            for line in runs.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        assert rows, f"{runs.relative_to(PROJECT_ROOT)} 为空"
+        assert [row["mode"] for row in rows] == ["react", "plan", "team"], (
+            f"{runs.relative_to(PROJECT_ROOT)} 必须覆盖三种模式"
+        )
+
+        raw_json = runs.read_text(encoding="utf-8")
+        assert not re.search(r"[A-Za-z]:\\\\", raw_json), (
+            f"{runs.relative_to(PROJECT_ROOT)} 泄漏了 Windows 绝对路径"
+        )
+        assert "/mnt/" not in raw_json, (
+            f"{runs.relative_to(PROJECT_ROOT)} 泄漏了挂载路径"
+        )
+
+        for row in rows:
+            assert row["run_id"].startswith(row["case_id"])
+            assert isinstance(row["metrics"], dict)
+            assert row["rubric"]
+            for section in ("papers", "notes", "memories"):
+                for item in row["artifacts"][section]:
+                    path = item.get("path")
+                    if path:
+                        assert not Path(path).is_absolute(), (
+                            f"{row['run_id']} 产物路径不是可移植相对路径: {path}"
+                        )
+
+        scores = bundle / "scores.jsonl"
+        assert scores.is_file(), f"{scores.relative_to(PROJECT_ROOT)} 缺失"
+        score_rows = [
+            json.loads(line)
+            for line in scores.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        by_run = {score["run_id"]: score for score in score_rows}
+        assert set(by_run) == {row["run_id"] for row in rows}
+        for score in score_rows:
+            for field in ("task_completion", "factual_correctness",
+                          "citation_validity", "output_completeness"):
+                assert field in score and 0.0 <= float(score[field]) <= 1.0

@@ -43,7 +43,7 @@ def isolate_eval_state(stamp: str):
     config.DATA_DIR = os.path.join("evals", "results", f"data_{stamp}")
 
 
-def build_runner(mode: str, metrics_collector=None):
+def build_runner(mode: str, metrics_collector=None, on_progress=None, artifacts=None):
     """按模式组装被测对象:三者都有 run(task)->str 接口。"""
     llm = LLMClient()
     if metrics_collector is not None:
@@ -55,17 +55,17 @@ def build_runner(mode: str, metrics_collector=None):
     tools += [RememberTool(store), RecallTool(store)]
     if metrics_collector is not None:
         tools = [InstrumentedTool(tool, metrics_collector) for tool in tools]
-    registry = ToolRegistry(tools)
+    registry = ToolRegistry(tools, artifacts=artifacts)
     if mode == "react":
         # 评测用的 Agent 不带会话记忆:每道题独立作答,分数才可比
         return Agent(llm, registry, system_prompt=RESEARCH_SYSTEM_PROMPT,
-                     max_steps=15, verbose=False)
+                     max_steps=15, verbose=False, on_progress=on_progress)
     if mode == "plan":
         worker = Agent(llm, registry, system_prompt=RESEARCH_SYSTEM_PROMPT,
-                       max_steps=15, verbose=False)
-        return Planner(llm, worker, verbose=False)
+                       max_steps=15, verbose=False, on_progress=on_progress)
+        return Planner(llm, worker, verbose=False, on_progress=on_progress)
     if mode == "team":
-        return ResearchTeam(llm, registry, verbose=False)
+        return ResearchTeam(llm, registry, verbose=False, on_progress=on_progress)
     raise ValueError(f"未知模式:{mode}")
 
 

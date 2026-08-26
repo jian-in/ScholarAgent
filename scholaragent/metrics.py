@@ -103,6 +103,9 @@ class InstrumentedTool:
     def completion_ready(self) -> bool:
         return self._tool.completion_ready()
 
+    def schema(self) -> dict:
+        return self._tool.schema()
+
     def run(self, **kwargs):
         self._collector.record_tool_call()
         return self._tool.run(**kwargs)

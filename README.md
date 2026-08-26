@@ -16,6 +16,11 @@ ScholarAgent 从零实现轻量 Agent 框架，不依赖 LangChain 等编排封�
   某个固定准确率。
 - 路由器、校准脚本、训练脚本和留出集评测入口已经实现，但真实模型运行、独立人工
   评分和留出集报告仍待完成，**尚未产出正式成本对比结论**。
+- 已公开第一个可复验真实案例：ReAct 论文文献调研在 ReAct/Plan/Team 三模式下的
+  真实运行（回答、轨迹摘要、指标与初步评分），见
+  [`docs/case-study.md`](docs/case-study.md) 与
+  `evals/case_results/react-method-evidence-v1/`。该案例评分为作者初步自评，
+  独立人工评分与正式成本对比结论仍待完成。
 - `data/` 与 `evals/results/` 是本地运行产物，不进入仓库；公开案例会单独提供经过
   检查的输入、轨迹摘要和结果。
 
