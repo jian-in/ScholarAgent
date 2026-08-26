@@ -18,7 +18,7 @@ lora_dropout: 0.05
 
 ### dataset
 dataset: scholar_sft
-dataset_dir: LLaMA-Factory/data   # relative to project root (run from E:\BiShe root)
+dataset_dir: LLaMA-Factory/data   # relative to project root
 template: qwen
 cutoff_len: 1024
 overwrite_cache: true

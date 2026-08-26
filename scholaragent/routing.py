@@ -119,9 +119,9 @@ class RuleRouter:
         if full_reading and (comparison or review):
             mode = "team"
             reason = "全文精读与" + ("多论文比较" if comparison else "综述任务")
-        elif features["has_complex_constraints"] or features["action_goal_count"] >= 3:
+        elif comparison or features["has_complex_constraints"] or features["action_goal_count"] >= 3:
             mode = "plan"
-            reason = "存在明确步骤依赖或多个行动目标"
+            reason = "需要多论文比较" if comparison else "存在明确步骤依赖或多个行动目标"
         else:
             mode = "react"
             reason = "单目标或低复杂度任务"

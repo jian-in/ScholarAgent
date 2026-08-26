@@ -10,12 +10,13 @@ ScholarAgent 从零实现轻量 Agent 框架，不依赖 LangChain 等编排封�
 
 ## 当前证据与边界
 
-- 仓库包含 **100+ 项离线测试**，覆盖 Agent 循环、工具、记忆、规划、团队模式、
+- 仓库包含 **130+ 项离线测试**，覆盖 Agent 循环、工具、记忆、规划、团队模式、
   路由、指标、启动脚本和本地工作台；可用 `python -m pytest -q` 复验。
 - 离线测试证明的是工程行为和回归边界，不等于真实文献任务的答案质量已经达到
   某个固定准确率。
-- 路由器、校准脚本、训练脚本和留出集评测入口已经实现，但真实模型运行、独立人工
-  评分和留出集报告仍待完成，**尚未产出正式成本对比结论**。
+- 路由器、校准脚本、训练脚本和留出集评测入口已经实现。规则路由可在固定 36 题上
+  零模型调用地复验复杂度标签一致性；另有 29/54 条真实校准观测用于成本诊断。
+  完整校准评分、学习策略和留出集报告仍待完成，**尚未产出正式成本对比结论**。
 - 已公开第一个可复验真实案例：ReAct 论文文献调研在 ReAct/Plan/Team 三模式下的
   真实运行（回答、轨迹摘要、指标与初步评分），见
   [`docs/case-study.md`](docs/case-study.md) 与
@@ -36,6 +37,37 @@ ScholarAgent 不是一个只把问题转发给大模型的聊天壳,而是一个
 > 本项目从零实现了一个轻量级科研调研智能体框架,使大语言模型能够在
 > 工具白名单、步数上限和可复现评测约束下,通过 ReAct 循环、任务规划、
 > 长期记忆和多智能体流水线辅助完成文献调研。
+
+## 与同类工具的差异
+
+下表只陈述可在本仓库复验的事实，不声明性能领先：
+
+| 维度 | 单模型聊天壳 | 黑盒编排框架 | ScholarAgent |
+|---|---|---|---|
+| 执行模式选择 | 无模式概念，链路由人工拆 | 通常由开发者硬编码调用链 | ReAct/Plan/Team 三模式 + `--auto` 自动路由，决策附带特征与人话理由 |
+| 路由可解释性 | 不适用 | 视框架，多为隐式 | 规则路由零模型调用、版本化特征，固定 36 题标签一致性可复验 |
+| 成本感知 | 无 | 少数提供 token 统计 | reward 显式建模质量−延迟−调用−token；token 缺失拒绝观测而非估算 |
+| 执行过程可见性 | 只见最终回答 | 见中间消息 | 执行级指标（耗时/LLM 调用/工具调用/token）+ 轨迹 + 产物收集 |
+| 失败处理 | 报错即止或静默 | 异常吞掉或回调 | 失败如实保留：步数耗尽、工具错误回传模型纠错、策略损坏安全回退 |
+| 依赖重量 | 极轻但无工具链 | 框架级依赖 | 4 个运行时依赖；ReAct 核心循环约 200 行，从零实现 |
+| 证据可复验 | 不可 | 视实现 | 案例证据包 + 130+ 项离线测试 + 双系统 CI |
+
+### 四个技术点与复验入口
+
+1. **从零实现的轻量 Agent 循环**：不依赖 LangChain 等编排封装，
+   「思考→行动→观察」循环含步数保险丝与坏参数容错。
+   复验：`scholaragent/agent.py`；`python main.py --demo`（离线）。
+2. **可解释的三模式路由**：确定性特征 `task-features-v1` + 规则基线
+   `rule-router-v1` + 可安全回退的学习路由，决策输出特征、理由与策略版本。
+   复验：`scholaragent/routing.py`；
+   `python evals/evaluate_rule_router.py --tasks evals/router_tasks.jsonl`（零模型调用）。
+3. **执行级指标与产物追踪**：每次运行记录真实 LLM/工具调用、token 与耗时，
+   并收集论文、笔记、记忆产物；token 为 `None` 时绝不伪造。
+   复验：`scholaragent/metrics.py`、`scholaragent/artifacts.py`；
+   工作台 Auto 模式运行后的指标面板。
+4. **失败可见与安全回退**：案例中 ReAct 模式 15 步耗尽未产出回答被完整保留；
+   路由策略缺失/损坏时打印原因并回退规则路由。
+   复验：`docs/case-study.md` 第 3 节 react 行；`tests/test_cost_aware_routing.py`。
 
 ## 核心理念
 
@@ -86,8 +118,10 @@ flowchart TB
 ## 目录结构
 
 ```
-毕设/
-├── main.py                  入口:交互模式 / 单次任务 / 离线演示
+ScholarAgent/
+├── main.py                  入口:交互模式 / 单次任务 / --plan / --team / --auto / --demo
+├── webapp.py                本地工作台服务(纯标准库 http.server,127.0.0.1:8765)
+├── web/                     工作台前端(原生 JS:任务提交、轨迹、指标、产物查看)
 ├── scholaragent/            核心包(自底向上分层)
 │   ├── config.py            配置层:从 .env 读取 API Key 等
 │   ├── llm.py               模型层:唯一碰大模型 API 的地方(含测试用假模型)
@@ -97,13 +131,22 @@ flowchart TB
 │   │                        长期记忆(JSONL 持久化 + 手写 BM25 检索)
 │   ├── planner.py           规划层:计划→执行→反思→汇总(M3)
 │   ├── team.py              多智能体:检索员→精读员→写作员流水线(M4)
+│   ├── routing.py           路由层:特征提取 + 规则路由 + 成本感知路由(--auto)
+│   ├── router_training.py   离线岭回归奖励模型拟合(训练不调用模型)
+│   ├── routing_evaluation.py 路由实验汇总:质量加权与混淆矩阵
 │   ├── evaluate.py          评测层:任务集加载、关键词打分、报告生成(M6)
+│   ├── metrics.py           执行级指标:耗时/LLM 调用/工具调用/token 采集
+│   ├── artifacts.py         产物收集:论文、笔记、记忆按运行归档
+│   ├── case_study.py        固定案例运行与可公开证据包写出
 │   └── tools/               内置工具:arXiv 搜索、论文下载/分段阅读、
 │                            研究笔记、记忆存取、计算器、时钟
-├── evals/                   评测任务集 tasks.jsonl 与评测入口 run_eval.py
+├── evals/                   评测任务集(tasks.jsonl / router_tasks.jsonl)
+│                            与评测入口:run_eval / run_case_study
+│                            / evaluate_rule_router / calibrate_router
+│                            / train_router / run_routing_eval
 ├── finetune/                (可选实验)QLoRA 微调脚手架,见其 README
 ├── tests/                   离线测试,不联网不花钱(核心循环、文献工具、
-│                            记忆、规划、多智能体、评测各一个文件)
+│                            记忆、规划、多智能体、路由、发布闸门等)
 ├── data/                    运行时生成:下载的论文 PDF、研究笔记、长期记忆
 │                            (已被 .gitignore 忽略,不入库)
 ├── requirements.txt         依赖清单
@@ -111,6 +154,9 @@ flowchart TB
 ```
 
 ## 快速开始
+
+> **五分钟看懂项目**：评审/演示的完整黄金路径（含离线兜底）见
+> [`docs/demo-guide.md`](docs/demo-guide.md)；下面是逐条命令版。
 
 以下命令在 **PowerShell**(Windows 自带终端)中执行:
 
@@ -207,6 +253,9 @@ API 未返回 token 时指标为 `None`。当 `lambda_token` 非零，训练会�
 # 自动路由；没有 data/router/policy.json 时使用规则路由
 .venv\Scripts\python main.py --auto "检索并阅读全文，比较三篇论文，撰写研究脉络综述"
 
+# 零模型调用评估规则路由
+.venv\Scripts\python evals\evaluate_rule_router.py --tasks evals\router_tasks.jsonl --output-dir evals\results\rule_routing
+
 # 先在固定校准集上运行三种模式，原始文件不得覆盖
 .venv\Scripts\python evals\calibrate_router.py --output evals\results\router_calibration.jsonl
 
@@ -246,5 +295,13 @@ API 未返回 token 时指标为 `None`。当 `lambda_token` 非零，训练会�
 - 许可证：[MIT License](LICENSE)
 - 贡献流程：[CONTRIBUTING.md](CONTRIBUTING.md)
 - 安全报告：[SECURITY.md](SECURITY.md)
+- 行为准则：[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- 更新日志：[CHANGELOG.md](CHANGELOG.md)
+- 维护说明：[MAINTAINERS.md](MAINTAINERS.md)
+- 发展路线：[docs/ROADMAP.md](docs/ROADMAP.md)
+
+运行时依赖（openai、python-dotenv、httpx、pypdf）均为 MIT 或 Apache-2.0
+许可证，与本项目 MIT 许可证兼容；Issue / PR 模板与离线测试 CI 位于
+`.github/`。
 
 欢迎通过 Issue 提交可复现的问题或使用场景；代码修改请附测试命令和结果。

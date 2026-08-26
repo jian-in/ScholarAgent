@@ -39,6 +39,13 @@ def test_rule_router_threshold_boundary_is_deterministic():
     assert router.route("检索一篇论文、阅读方法并总结").mode == "plan"
 
 
+def test_rule_router_sends_multi_paper_comparison_to_plan_without_full_text():
+    router = RuleRouter()
+    decision = router.route("先查找 Chain-of-Thought 与 Tree of Thoughts 两篇论文，再比较它们的推理结构。")
+    assert decision.mode == "plan"
+    assert decision.reason == "需要多论文比较"
+
+
 class RecordingRunner:
     def __init__(self, answer):
         self.answer = answer

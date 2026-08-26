@@ -88,6 +88,25 @@ def test_public_release_includes_security_policy() -> None:
         assert required_text in content
 
 
+def test_public_release_includes_community_governance_files() -> None:
+    required_files = {
+        "CODE_OF_CONDUCT.md": ("Contributor Covenant", "SECURITY.md"),
+        "CHANGELOG.md": ("Keep a Changelog",),
+        "MAINTAINERS.md": ("维护范围", "SECURITY.md"),
+        ".github/ISSUE_TEMPLATE/bug_report.md": ("复现",),
+        ".github/ISSUE_TEMPLATE/feature_request.md": ("ReAct",),
+        ".github/PULL_REQUEST_TEMPLATE.md": ("pytest",),
+        ".github/workflows/ci.yml": ("pytest", "requirements.txt"),
+    }
+
+    for relative, required_text in required_files.items():
+        path = PROJECT_ROOT / relative
+        assert path.is_file(), f"公开仓库需要 {relative}"
+        content = path.read_text(encoding="utf-8")
+        for text in required_text:
+            assert text in content, f"{relative} 缺少关键内容: {text}"
+
+
 def test_readme_leads_with_public_project_positioning() -> None:
     introduction = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")[:600]
 
@@ -99,7 +118,7 @@ def test_readme_exposes_reproducible_evidence_and_project_boundaries() -> None:
     readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
 
     for required_text in (
-        "100+ 项离线测试",
+        "130+ 项离线测试",
         "尚未产出正式成本对比结论",
         "CONTRIBUTING.md",
         "SECURITY.md",
