@@ -1,0 +1,40 @@
+# 成本感知路由任务集 v1。任务和划分先固定；calibration 用于训练，holdout 仅用于最终评测。
+# 简单任务（12）
+{"id":"simple-01","split":"calibration","category":"simple","task":"查找 ReAct 论文的标题、第一作者和 arXiv 编号。"}
+{"id":"simple-02","split":"calibration","category":"simple","task":"检索 Chain-of-Thought 论文，给出发表年份和 arXiv 编号。"}
+{"id":"simple-03","split":"calibration","category":"simple","task":"查询 Toolformer 论文的第一作者和标题。"}
+{"id":"simple-04","split":"calibration","category":"simple","task":"查找 Reflexion 论文的 arXiv 编号。"}
+{"id":"simple-05","split":"calibration","category":"simple","task":"检索一篇关于 LLM agent memory 的论文，只列出标题和编号。"}
+{"id":"simple-06","split":"calibration","category":"simple","task":"查询 AutoGen 论文的作者列表中第一位作者。"}
+{"id":"simple-07","split":"holdout","category":"simple","task":"查找 Tree of Thoughts 论文的标题和 arXiv 编号。"}
+{"id":"simple-08","split":"holdout","category":"simple","task":"检索 ReWOO 论文，给出其 arXiv 编号。"}
+{"id":"simple-09","split":"holdout","category":"simple","task":"查找一篇关于 retrieval augmented generation 的论文，列出标题和年份。"}
+{"id":"simple-10","split":"holdout","category":"simple","task":"查询 Voyager 论文的第一作者和 arXiv 编号。"}
+{"id":"simple-11","split":"holdout","category":"simple","task":"检索一篇 agent planning 论文，只给出标题和编号。"}
+{"id":"simple-12","split":"holdout","category":"simple","task":"查找 Generative Agents 论文的发表年份。"}
+# 中等任务（12）
+{"id":"medium-01","split":"calibration","category":"medium","task":"先检索 ReAct 论文，再阅读摘要和方法部分，保存一条包含推理与行动关系的研究笔记。"}
+{"id":"medium-02","split":"calibration","category":"medium","task":"检索 Toolformer 论文，阅读其方法部分后总结工具调用训练机制并保存笔记。"}
+{"id":"medium-03","split":"calibration","category":"medium","task":"检索两篇 LLM agent memory 论文，比较它们的记忆存储方式，并保存比较结论。"}
+{"id":"medium-04","split":"calibration","category":"medium","task":"检索 Reflexion 论文，再阅读引言，说明其如何利用语言反馈并记入长期记忆。"}
+{"id":"medium-05","split":"calibration","category":"medium","task":"限定 2023 年，检索 agent planning 论文，阅读一篇的方法并给出带出处的要点。"}
+{"id":"medium-06","split":"calibration","category":"medium","task":"先查找 Chain-of-Thought 与 Tree of Thoughts 两篇论文，再比较它们的推理结构。"}
+{"id":"medium-07","split":"holdout","category":"medium","task":"检索 AutoGen 论文，阅读摘要后说明多智能体协作设定，并保存笔记。"}
+{"id":"medium-08","split":"holdout","category":"medium","task":"先检索 Generative Agents 论文，再阅读方法部分，记录其记忆检索流程。"}
+{"id":"medium-09","split":"holdout","category":"medium","task":"检索两篇 RAG 论文，比较检索器在流程中的作用，给出来源。"}
+{"id":"medium-10","split":"holdout","category":"medium","task":"限定近三年，检索一篇 agent reflection 论文，阅读摘要并保存其核心机制。"}
+{"id":"medium-11","split":"holdout","category":"medium","task":"先检索 Voyager 论文，再阅读方法部分，说明技能库如何更新。"}
+{"id":"medium-12","split":"holdout","category":"medium","task":"检索一篇 LLM tool use 论文，阅读其方法并把关键结论保存为研究笔记。"}
+# 复杂任务（12）
+{"id":"complex-01","split":"calibration","category":"complex","task":"检索并阅读全文，比较至少三篇 LLM agent 论文，撰写方法脉络综述、证据来源和开放问题。"}
+{"id":"complex-02","split":"calibration","category":"complex","task":"检索并阅读全文，比较三篇 agent memory 论文，写出分类综述、优缺点与开放问题。"}
+{"id":"complex-03","split":"calibration","category":"complex","task":"检索近三年论文并阅读全文，比较多篇 agent planning 方法，形成带证据的研究脉络综述。"}
+{"id":"complex-04","split":"calibration","category":"complex","task":"检索并阅读全文，比较 ReAct、Reflexion 和 Toolformer，写出工具使用机制的综述与开放问题。"}
+{"id":"complex-05","split":"calibration","category":"complex","task":"检索并阅读全文，比较至少三篇多智能体协作论文，形成方法综述、局限性和未来问题。"}
+{"id":"complex-06","split":"calibration","category":"complex","task":"检索并阅读全文，比较多篇 RAG 与 agent 结合方法，写出证据化综述和研究空白。"}
+{"id":"complex-07","split":"holdout","category":"complex","task":"检索并阅读全文，比较至少三篇 LLM reflection 论文，撰写方法演进、证据和开放问题综述。"}
+{"id":"complex-08","split":"holdout","category":"complex","task":"检索并阅读全文，比较三篇 long-term memory agent 论文，形成分类、优缺点与研究空白。"}
+{"id":"complex-09","split":"holdout","category":"complex","task":"检索并阅读全文，比较多篇 tool-using agent 论文，写出方法脉络、证据和局限性。"}
+{"id":"complex-10","split":"holdout","category":"complex","task":"检索并阅读全文，比较至少三篇 autonomous agent 论文，形成综述、关键分歧和开放问题。"}
+{"id":"complex-11","split":"holdout","category":"complex","task":"检索并阅读全文，比较 ReWOO、ReAct 和 Tree of Thoughts，写出规划方法综述与局限性。"}
+{"id":"complex-12","split":"holdout","category":"complex","task":"检索并阅读全文，比较多篇 scientific literature agent 论文，写出证据化综述和未来研究问题。"}

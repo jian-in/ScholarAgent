@@ -1,0 +1,12 @@
+# NOTE: keep this file ASCII-only.
+# On Chinese Windows, pip reads it with GBK encoding and
+# Chinese comments would crash `pip install -r requirements.txt`.
+
+# runtime
+openai>=1.30
+python-dotenv>=1.0
+httpx>=0.27
+pypdf>=4.0
+
+# dev / test
+pytest>=8.0

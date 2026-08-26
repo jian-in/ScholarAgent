@@ -1,0 +1,4 @@
+FROM qwen3.5:9b
+
+# 32K is the practical long-paper setting for an RTX 4060 8GB.
+PARAMETER num_ctx 32768

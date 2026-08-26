@@ -1,0 +1,13 @@
+# ScholarAgent 评测任务集 v1(以 # 开头的行是注释)
+# 每行一道题:id、task(任务)、expect(期望关键词)、modes(适用模式,缺省全部)
+{"id": "calc-1", "task": "计算 365*24+100 的结果", "expect": ["8860"], "modes": ["react", "plan"]}
+{"id": "calc-2", "task": "一年按 365 天算,一共有多少分钟?", "expect": ["525600"], "modes": ["react", "plan"]}
+{"id": "search-1", "task": "在 arXiv 上检索 ReAct 论文,给出它的 arXiv 编号", "expect": ["2210.03629"], "modes": ["react", "plan"]}
+{"id": "search-2", "task": "检索关于 LLM agent survey 的论文,列出至少两篇的标题和编号", "expect": ["arXiv", "agent"], "modes": ["react", "plan"]}
+{"id": "read-1", "task": "下载论文 2210.03629 并阅读第一页,说明 ReAct 把哪两种能力结合在一起", "expect": [["推理", "reasoning"], ["行动", "acting", "action"]], "modes": ["react", "plan"]}
+{"id": "note-1", "task": "把「BM25 是经典的文本检索排序算法」保存为研究笔记,然后读出笔记确认保存成功", "expect": ["BM25", "保存"], "modes": ["react", "plan"]}
+# mem-1 的已知局限:关键词 2027 出现在任务文本里,模型复述任务也能得分,
+# 因此本题只验证"存-取流程走通",不能证明检索正确性 —— 论文中如实说明
+{"id": "mem-1", "task": "把「本项目答辩时间是2027年上半年」存入长期记忆,然后用关键词「答辩」检索并复述", "expect": ["2027"], "modes": ["react", "plan"]}
+{"id": "team-1", "task": "LLM agent 的推理与行动结合方法", "expect": ["ReAct", "2210"], "modes": ["team"]}
+{"id": "team-2", "task": "大语言模型智能体的记忆机制", "expect": ["arXiv", "记忆"], "modes": ["team"]}

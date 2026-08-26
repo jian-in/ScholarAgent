@@ -1,0 +1,27 @@
+# 机密配置,绝不提交
+.env
+
+# Python 运行产物
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# 虚拟环境
+.venv/
+
+# Claude Code 的工作文件
+.claude/
+
+# CodeGraph 本地索引缓存
+.codegraph/
+
+# 以后存放下载论文、向量库等数据
+data/
+
+# 微调与评测的运行产物(代码入库,产物不入库)
+finetune/data/
+finetune/output/
+evals/results/
+
+# 本地私人进度记录（仅保留在工作机）
+docs/进度报告_2026-07-26夜间.md

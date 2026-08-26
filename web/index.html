@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f5f7f4">
+    <title>ScholarAgent 工作台</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar" aria-label="工作台导航">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">S</span>
+          <div><strong>ScholarAgent</strong><small>Research workspace</small></div>
+        </div>
+        <nav>
+          <a class="nav-item active" href="#workspace">调研工作台</a>
+          <a class="nav-item" href="#routing">路由策略</a>
+          <a class="nav-item" href="#result">本轮结果</a>
+        </nav>
+        <div class="sidebar-foot">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="connection-label">正在检查本地服务</span>
+        </div>
+      </aside>
+
+      <main>
+        <header class="topbar">
+          <div>
+            <p class="section-kicker">科研文献调研</p>
+            <h1>把任务交给合适的执行方式。</h1>
+          </div>
+          <div class="model-state" id="model-state">本地模型状态加载中</div>
+        </header>
+
+        <section class="workspace-grid" id="workspace" aria-label="任务工作区">
+          <article class="task-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="section-kicker">新任务</p>
+                <h2>研究请求</h2>
+              </div>
+              <button class="text-button" type="button" id="clear-task">清空</button>
+            </div>
+            <label class="sr-only" for="task-input">输入研究任务</label>
+            <textarea id="task-input" rows="8" placeholder="例如：检索并阅读全文，比较三篇 agent memory 论文，撰写研究脉络与开放问题。"></textarea>
+            <div class="examples" aria-label="示例任务">
+              <button type="button" data-example="查找 ReAct 论文的标题、第一作者和 arXiv 编号。">查论文信息</button>
+              <button type="button" data-example="先检索相关论文，再阅读方法部分并保存笔记。">多步阅读</button>
+              <button type="button" data-example="检索并阅读全文，比较三篇论文，撰写研究脉络综述和开放问题。">证据化综述</button>
+            </div>
+            <div class="mode-row" aria-label="执行模式">
+              <span>执行方式</span>
+              <div class="mode-selector" role="radiogroup" aria-label="执行方式选择">
+                <button type="button" role="radio" aria-checked="false" data-mode="react">ReAct</button>
+                <button type="button" role="radio" aria-checked="false" data-mode="plan">Plan</button>
+                <button type="button" role="radio" aria-checked="false" data-mode="team">Team</button>
+                <button type="button" role="radio" aria-checked="true" data-mode="auto" class="selected">Auto</button>
+              </div>
+            </div>
+            <div class="action-row">
+              <button class="run-button" type="button" id="run-task">开始调研</button>
+              <button class="cancel-button" type="button" id="cancel-task" hidden>取消任务</button>
+            </div>
+            <p class="timeout-hint" id="timeout-hint" hidden>任务已运行较久，可继续等待或点取消。</p>
+          </article>
+
+          <aside class="route-panel" id="routing" aria-live="polite">
+            <img class="research-field" src="/assets/research-field.png" alt="叠放的论文页面与研究标记">
+            <div class="route-visual" aria-hidden="true">
+              <span>R</span><i></i><span>P</span><i></i><span>T</span>
+            </div>
+            <p class="section-kicker">本轮路由</p>
+            <h2 id="route-mode">等待任务</h2>
+            <p id="route-reason">Auto 模式会根据任务特征选择执行器；没有可用策略时回退规则路由。</p>
+            <dl class="route-details">
+              <div><dt>策略</dt><dd id="policy-version">未运行</dd></div>
+              <div><dt>预测效用</dt><dd id="route-utility">未运行</dd></div>
+              <div><dt>耗时</dt><dd id="elapsed-time">未运行</dd></div>
+            </dl>
+          </aside>
+        </section>
+
+        <section class="result-section" id="result" aria-live="polite">
+          <div class="result-heading">
+            <div>
+              <p class="section-kicker">执行记录</p>
+              <h2>本轮结果</h2>
+            </div>
+            <div class="result-actions">
+              <button class="text-button" type="button" id="copy-answer" hidden>复制回答</button>
+              <span class="run-state" id="run-state">就绪</span>
+            </div>
+          </div>
+          <div class="progress-log" id="progress-log" hidden aria-label="实时步骤日志"></div>
+          <div class="artifacts-panel" id="artifacts-panel" hidden aria-label="本轮产物">
+            <p class="section-kicker">本轮产物</p>
+            <div id="artifacts-body"></div>
+          </div>
+          <div class="result-body" id="result-body">
+            <p>提交任务后，步骤日志会实时滚动；完成后显示回答、路由理由、产物与耗时。</p>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script src="/app.js"></script>
+  </body>
+</html>

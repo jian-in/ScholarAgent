@@ -1,0 +1,14 @@
+# LLaMA-Factory export config: merge LoRA adapters back into the base model.
+# Run from project root AFTER training finishes:
+#   llamafactory-cli export finetune/qlora_qwen_1_5b_export.yaml
+# Output is HuggingFace format; see finetune/README.md step 6 for the
+# GGUF conversion + Ollama deployment that follow.
+
+model_name_or_path: Qwen/Qwen2.5-1.5B-Instruct
+adapter_name_or_path: finetune/output/qwen2.5-1.5b-scholar
+template: qwen
+finetuning_type: lora
+
+export_dir: finetune/output/merged
+export_size: 2
+export_legacy_format: false
