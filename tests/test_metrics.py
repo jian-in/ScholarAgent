@@ -51,6 +51,26 @@ def test_metrics_collector_keeps_complete_api_usage():
     assert metrics.tool_calls == 4
 
 
+def test_metrics_break_down_token_usage_by_model_role():
+    collector = MetricsCollector("plan")
+    collector.record_llm_call(
+        {"prompt_tokens": 12, "completion_tokens": 3},
+        role="research", provider="cloud", model="cloud-model",
+    )
+    collector.record_llm_call(
+        {"prompt_tokens": 8, "completion_tokens": 7},
+        role="summary", provider="ollama", model="local-model",
+    )
+
+    by_role = collector.finish().llm_usage_by_role
+    assert by_role["research"] == {
+        "provider": "cloud", "model": "cloud-model", "llm_calls": 1,
+        "prompt_tokens": 12, "completion_tokens": 3,
+    }
+    assert by_role["summary"]["provider"] == "ollama"
+    assert by_role["summary"]["prompt_tokens"] == 8
+
+
 def test_routing_interfaces_have_versioned_policy_shape():
     decision = RoutingDecision(
         mode="react", predicted_utility={"react": 0.5}, features={"bias": 1.0},

@@ -252,6 +252,42 @@ def test_calculator_basic():
     assert safe_eval("10/4") == 2.5
 
 
+def test_research_model_hands_off_to_local_summary_after_tool_evidence():
+    """外部工具证据产生后，最终摘要必须交给单独的本地模型。"""
+    class RecordingLLM(ScriptedLLM):
+        def __init__(self, replies):
+            super().__init__(replies)
+            self.calls = []
+
+        def chat(self, messages, tools=None):
+            self.calls.append({"messages": [dict(m) for m in messages], "tools": tools})
+            return super().chat(messages, tools)
+
+    research = RecordingLLM([
+        {"content": "先查证据", "tool_calls": [{
+            "id": "calc-1", "name": "calculator",
+            "arguments": {"expression": "2+2"},
+        }]},
+        {"content": "外部证据已整理", "tool_calls": []},
+    ])
+    summary = RecordingLLM([
+        {"content": "本地摘要：证据显示结果为 4。", "tool_calls": []},
+    ])
+
+    agent = Agent(
+        research,
+        ToolRegistry([CalculatorTool()]),
+        summary_llm=summary,
+        verbose=False,
+    )
+
+    assert agent.run("查证并总结 2+2") == "本地摘要：证据显示结果为 4。"
+    assert len(research.calls) == 2
+    assert len(summary.calls) == 1
+    assert summary.calls[0]["tools"] is None
+    assert "内部总结" in summary.calls[0]["messages"][-1]["content"]
+
+
 if __name__ == "__main__":
     # 不依赖 pytest 的极简测试运行器
     for name, fn in sorted(globals().items()):

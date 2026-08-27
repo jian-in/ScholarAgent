@@ -10,12 +10,13 @@ Agent 每次 run() 都是全新对话(记忆系统要到 M2 才有),
 import os
 from datetime import datetime
 
-from .. import config
-from ..tool import Tool
+from .. import config  # 旧测试/外部工具通过此兼容属性调整默认目录
+from ..tool import Tool, ToolResult
+from ..workspace import Workspace, workspace_for
 
 
-def _notes_file() -> str:
-    return os.path.join(config.DATA_DIR, "notes", "research_notes.md")
+def _notes_file(workspace: Workspace | str | None = None) -> str:
+    return str(workspace_for(workspace).notes_path)
 
 
 class SaveNoteTool(Tool):
@@ -36,13 +37,29 @@ class SaveNoteTool(Tool):
         "required": ["title", "content"],
     }
 
+    def __init__(self, workspace: Workspace | str | None = None):
+        self.workspace = workspace
+
+    def _active_workspace(self) -> Workspace:
+        return workspace_for(self.workspace)
+
     def run(self, title: str, content: str) -> str:
-        path = _notes_file()
+        path = _notes_file(self.workspace)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
         with open(path, "a", encoding="utf-8") as f:
             f.write(f"\n## {title}({stamp})\n\n{content.strip()}\n")
         return f"笔记「{title}」已保存"
+
+    def artifact_metadata(self, arguments, result: ToolResult):
+        if not result.success:
+            return []
+        return [{
+            "kind": "note",
+            "title": str(arguments.get("title") or "未命名笔记"),
+            "path": str(self._active_workspace().notes_path),
+            "summary": str(arguments.get("content") or ""),
+        }]
 
 
 class ReadNotesTool(Tool):
@@ -52,8 +69,11 @@ class ReadNotesTool(Tool):
 
     MAX_CHARS = 4000  # 和 read_paper 一样,守住上下文预算
 
+    def __init__(self, workspace: Workspace | str | None = None):
+        self.workspace = workspace
+
     def run(self) -> str:
-        path = _notes_file()
+        path = _notes_file(self.workspace)
         if not os.path.exists(path):
             return "笔记本还是空的,读到重要内容可以用 save_note 记下来"
         with open(path, encoding="utf-8") as f:

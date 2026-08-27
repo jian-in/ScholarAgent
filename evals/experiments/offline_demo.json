@@ -1,0 +1,10 @@
+{
+  "schema_version": "experiment-definition-v1",
+  "id": "offline-demo-v1",
+  "tasks": "offline_demo_tasks.jsonl",
+  "strategy": "fixed",
+  "modes": ["react"],
+  "model": "scripted-demo",
+  "demo": true,
+  "strategy_version": "experiment-run-v1"
+}

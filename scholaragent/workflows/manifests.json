@@ -1,0 +1,96 @@
+{
+  "schema_version": "workflow-manifest-v1",
+  "workflows": [
+    {
+      "name": "gap-survey",
+      "version": "1.0.0",
+      "description": "四路资料缺口补全：推理、工具使用、近期综述和推理效率分别检索、精读并汇总。",
+      "input_formats": ["task-only", "pdf-text", "scanned-pdf", "html", "doi-arxiv", "pasted-text"],
+      "outputs": ["answer", "gap-matrix", "events", "metrics", "artifacts"],
+      "always_load": ["gap-track-plan", "paper-core-card", "evidence-contract"],
+      "references": [
+        {"condition": "每个方向开始调研", "path": "four-track gap plan"},
+        {"condition": "生成代表论文结论", "path": "paper core card and source anchor rules"},
+        {"condition": "方向证据不足", "path": "uncertainty and missing-evidence rules"}
+      ],
+      "evidence_requirements": ["track-status", "paper-core", "source-or-scope", "uncertainty-on-missing-evidence"],
+      "validators": ["four-track-completeness", "paper-card-fields", "source-anchor-consistency"],
+      "status": "implemented"
+    },
+    {
+      "name": "research-review",
+      "version": "1.0.0",
+      "description": "通用科研调研：检索、阅读、记录和总结，沿用 ScholarAgent 现有运行时。",
+      "input_formats": ["task-only", "pdf-text", "scanned-pdf", "html", "doi-arxiv", "pasted-text"],
+      "outputs": ["answer", "events", "metrics", "artifacts"],
+      "always_load": ["research-system-prompt", "run-context", "evidence-contract"],
+      "references": [
+        {"condition": "需要解释某个工具或来源", "path": "tool schema and artifact metadata"},
+        {"condition": "需要回答来源不足", "path": "evidence status and uncertainty"}
+      ],
+      "evidence_requirements": ["source-or-scope", "uncertainty-on-missing-evidence"],
+      "validators": ["run-result-contract", "event-consistency", "artifact-consistency"],
+      "status": "implemented"
+    },
+    {
+      "name": "paper-reading",
+      "version": "1.0.0",
+      "description": "面向全文论文阅读的来源地图、段落锚点、图表和公式输出契约。",
+      "input_formats": ["pdf-text", "scanned-pdf", "html", "doi-arxiv", "pasted-text"],
+      "outputs": ["paper.md", "source_map.json", "translation_notes.md", "assets/"],
+      "always_load": ["reading-principles", "source-map-contract", "output-contract"],
+      "references": [
+        {"condition": "图表或公式需要视觉/结构审查", "path": "figure-table-equation guidance"},
+        {"condition": "用户追问论文细节", "path": "source-anchor grounding rules"}
+      ],
+      "evidence_requirements": ["stable-source-anchor", "page-or-structure-locator", "confidence"],
+      "validators": ["source-map-links", "asset-links", "equation-delimiters"],
+      "status": "contract"
+    },
+    {
+      "name": "paper-card",
+      "version": "1.0.0",
+      "description": "单篇论文的结论—证据矩阵和边界审查契约。",
+      "input_formats": ["pdf-text", "scanned-pdf", "html", "doi-arxiv", "pasted-text"],
+      "outputs": ["paper-card.md", "audit-report.json"],
+      "always_load": ["claim-evidence-matrix", "source-boundary", "card-output-contract"],
+      "references": [
+        {"condition": "页码不可可靠获取", "path": "structure-grounded fallback"},
+        {"condition": "提出后续研究想法", "path": "hypothesis and novelty boundary"}
+      ],
+      "evidence_requirements": ["claim", "supporting-anchor", "assessment-status"],
+      "validators": ["claim-groundedness", "locator-consistency", "scope-disclosure"],
+      "status": "contract"
+    },
+    {
+      "name": "literature-search",
+      "version": "1.0.0",
+      "description": "多源文献发现、引用核验和去重的任务契约。",
+      "input_formats": ["task-only", "doi-arxiv", "pasted-text"],
+      "outputs": ["answer", "source-list", "dedup-report"],
+      "always_load": ["source-priority", "search-routing", "dedup-contract"],
+      "references": [
+        {"condition": "主来源不可用", "path": "documented source fallback"},
+        {"condition": "存在重复文献", "path": "doi/arxiv/title deduplication"}
+      ],
+      "evidence_requirements": ["source-identity", "retrieval-status", "dedup-key"],
+      "validators": ["source-identity", "duplicate-check"],
+      "status": "implemented"
+    },
+    {
+      "name": "literature-pipeline",
+      "version": "1.0.0",
+      "description": "批量文献发现、筛选、精读和只读归档的可配置契约。",
+      "input_formats": ["task-only", "pasted-text"],
+      "outputs": ["digest", "archive-index", "score-breakdown"],
+      "always_load": ["candidate-ranking", "dedup-contract", "read-only-archive"],
+      "references": [
+        {"condition": "需要周期性运行", "path": "local scheduler adapter"},
+        {"condition": "需要对外发送", "path": "explicit delivery adapter and approval"}
+      ],
+      "evidence_requirements": ["score-breakdown", "source-level", "archive-key"],
+      "validators": ["score-arithmetic", "dedup-report", "archive-scope"],
+      "status": "contract"
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scholaragent"
+version = "0.1.0rc1"
+description = "面向科研文献调研的透明、可复验 Agent 实验台"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+license = { file = "LICENSE" }
+authors = [{ name = "ScholarAgent contributors" }]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+  "openai>=1.30",
+  "python-dotenv>=1.0",
+  "httpx>=0.27",
+  "pypdf>=4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "build>=1.2",
+]
+
+[project.scripts]
+scholaragent = "main:main"
+scholaragent-web = "webapp:main"
+
+[tool.setuptools]
+include-package-data = true
+py-modules = ["main", "webapp"]
+
+[tool.setuptools.packages.find]
+include = ["scholaragent*"]
+
+[tool.setuptools.package-data]
+"scholaragent.workflows" = ["*.json"]
+
+# Keep the standard-library Web UI available to an installed console script.
+[tool.setuptools.data-files]
+"web" = ["web/index.html", "web/app.js", "web/styles.css"]
+"web/assets" = ["web/assets/research-field.png"]

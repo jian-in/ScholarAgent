@@ -25,6 +25,49 @@ ScholarAgent 从零实现轻量 Agent 框架，不依赖 LangChain 等编排封�
 - `data/` 与 `evals/results/` 是本地运行产物，不进入仓库；公开案例会单独提供经过
   检查的输入、轨迹摘要和结果。
 
+本项目还吸收了 [nature-skills](https://github.com/Yuan1z0825/nature-skills)
+中“短路由器 + 静态工作流清单 + 来源锚点 + 确定性审查”的可复验思路，
+但没有复制其源码、资源或整套技能目录。具体边界和 Apache-2.0 使用注意事项见
+[`docs/architecture/nature-skills-吸收说明.md`](docs/architecture/nature-skills-吸收说明.md)。
+
+扫描版 PDF 的阅读增强见
+[`docs/architecture/ocr-增强说明.md`](docs/architecture/ocr-增强说明.md)：
+项目会优先读取 PDF 文字层；页面没有文字层时，自动尝试调用本机的
+Tesseract + `pdftoppm`，并在阅读结果中标记 `[OCR]`，同时把该页证据锚点降为
+`medium` 置信度。OCR 是可选外部依赖，不会把用户机器上的二进制文件打进仓库。
+
+网页工作台顶部提供模型选择器：它会发现本机 Ollama 的聊天模型，也会显示 `.env`
+中配置的云端 OpenAI 兼容模型。切换只影响之后创建的新任务，正在运行的任务继续使用
+启动时已经绑定的模型。运行结果会展示 LLM 调用次数、工具调用次数以及服务实际返回的
+输入/输出/总 token；接口没有返回 token 时显示“Token 未返回”，不做估算。配置说明见
+[`docs/architecture/模型切换与token统计.md`](docs/architecture/模型切换与token统计.md)。
+工作台默认还提供“双模型分工”：云端模型负责外部论文检索和工具决策，本地 Ollama
+负责证据摘要、反思和最终汇总；每次运行的事件时间线会显示实际角色与模型。可在页面
+一键切回单模型，详细边界见
+[`docs/architecture/模型分工与超时策略.md`](docs/architecture/模型分工与超时策略.md)。
+
+## 五分钟启动（源码与安装两条路径）
+
+源码运行适合开发和复验：
+
+```powershell
+python -m venv .venv
+.venv\Scripts\python -m pip install -r requirements.txt
+.venv\Scripts\python main.py --demo
+.venv\Scripts\python webapp.py --open
+```
+
+安装候选版本适合验证入口和 wheel：
+
+```powershell
+.venv\Scripts\python -m pip install ".[dev]"
+.venv\Scripts\scholaragent.exe --demo
+.venv\Scripts\scholaragent-web.exe --open
+```
+
+`--demo` 使用内置脚本模型，不需要 API Key；真实调研仍需在本地 `.env` 配置
+OpenAI 兼容接口或运行 Ollama。当前发布候选为 `v0.1.0-rc1`，尚未发布到 PyPI。
+
 ## 项目定位
 
 ScholarAgent 不是一个只把问题转发给大模型的聊天壳,而是一个面向
@@ -52,7 +95,7 @@ ScholarAgent 不是一个只把问题转发给大模型的聊天壳,而是一个
 | 依赖重量 | 极轻但无工具链 | 框架级依赖 | 4 个运行时依赖；ReAct 核心循环约 200 行，从零实现 |
 | 证据可复验 | 不可 | 视实现 | 案例证据包 + 130+ 项离线测试 + 双系统 CI |
 
-### 四个技术点与复验入口
+### 五个技术点与复验入口
 
 1. **从零实现的轻量 Agent 循环**：不依赖 LangChain 等编排封装，
    「思考→行动→观察」循环含步数保险丝与坏参数容错。
@@ -68,6 +111,11 @@ ScholarAgent 不是一个只把问题转发给大模型的聊天壳,而是一个
 4. **失败可见与安全回退**：案例中 ReAct 模式 15 步耗尽未产出回答被完整保留；
    路由策略缺失/损坏时打印原因并回退规则路由。
    复验：`docs/case-study.md` 第 3 节 react 行；`tests/test_cost_aware_routing.py`。
+5. **来源感知与产物审计**：按任务意图和输入来源选择声明式工作流；论文阅读工具
+   输出稳定的页码/段落锚点，运行结果和证据包可离线检查 `run_id`、唯一终态事件
+   与证据校验状态。
+   复验：`scholaragent/workflows/manifests.json`、`scholaragent/evidence.py`、
+   `scholaragent/audit.py`；`python -m pytest tests/test_workflow_contracts.py tests/test_artifact_audit.py -q`。
 
 ## 核心理念
 
@@ -83,11 +131,17 @@ ScholarAgent 不是一个只把问题转发给大模型的聊天壳,而是一个
 
 - 按关键词检索 arXiv 论文,在官方接口繁忙时可用 OpenAlex 的 arXiv 索引兜底。
 - 按 arXiv 编号下载 PDF,并按页/字符分段阅读长论文,避免一次塞爆上下文。
+- 读取扫描版 PDF：没有文字层的页面会自动尝试 Tesseract OCR，结果带 `[OCR]`
+  标记和可审计的页码来源锚点；依赖不可用时会保留可解释的降级信息。
 - 保存和读取研究笔记,把重要结论写入长期记忆,再用手写 BM25 检索召回。
 - 调用计算器和时钟等基础工具,演示模型如何把外部结果纳入回答。
 - 在 `--plan` 模式下执行「计划 → 单步 ReAct 执行 → 反思重试 → 汇总」。
 - 在 `--team` 模式下执行「检索员 → 精读员 → 写作员」的多智能体流水线。
-- 在没有云端 API Key 但本机装有 Ollama 时,自动探测可用本地聊天模型。
+- 自动探测本机 Ollama 聊天模型，并在网页工作台切换本地模型或已配置的云端模型。
+- 对明确的资料缺口任务自动拆成推理、工具使用、近期综述、推理效率四个方向，
+  快捷入口默认先做摘要级快速筛选，也可切换到深度精读；每个方向要求论文核心卡片
+  和来源证据，再汇总横向对比与剩余缺口。网页提供“快速/深度补齐四项缺口”快捷入口，
+  详见 [`docs/architecture/资料缺口调研说明.md`](docs/architecture/资料缺口调研说明.md)。
 - 用 `ScriptedLLM` 离线演示/测试 Agent 循环,用 `evals/` 做模式消融评测。
 
 更完整的毕业设计表述、答辩 demo 脚本和边界说明见
@@ -126,6 +180,14 @@ ScholarAgent/
 │   ├── config.py            配置层:从 .env 读取 API Key 等
 │   ├── llm.py               模型层:唯一碰大模型 API 的地方(含测试用假模型)
 │   ├── tool.py              工具层:Tool 基类 + ToolRegistry 登记处
+│   ├── workspace.py         运行级工作区:论文/笔记/记忆/证据路径
+│   ├── events.py            运行事件与取消上下文
+│   ├── runtime.py           CLI/Web/评测共用的统一组装与 RunResult
+│   ├── workflow.py          静态工作流清单与来源格式路由
+│   ├── evidence.py          来源锚点、主张—证据关系与证据账本
+│   ├── audit.py             运行结果与证据包的确定性审计
+│   ├── ocr.py               Tesseract + PDF 栅格化 OCR 适配器(可选)
+│   ├── experiments.py       实验清单与不可覆盖证据包
 │   ├── agent.py             智能体层:思考→行动→观察 的 ReAct 循环
 │   ├── memory.py            记忆层:会话记忆(按轮裁剪)+
 │   │                        长期记忆(JSONL 持久化 + 手写 BM25 检索)
@@ -270,6 +332,16 @@ API 未返回 token 时指标为 `None`。当 `lambda_token` 非零，训练会�
 和每题理由。质量由独立人工评分表按任务完成、事实正确性、引用有效性和输出完整性
 加权；未评分数据会明确标记为“未评分”，不纳入质量结论。
 
+实验清单也可以生成不可覆盖的证据包与 Markdown 汇总；下面是完全离线的示例：
+
+```powershell
+.venv\Scripts\python evals\run_experiment.py `
+  --manifest evals\experiments\offline_demo.json `
+  --output evals\results\offline-demo-v1
+```
+
+清单运行会把公开证据与 `<output>.state` 私有工作区分开；目标目录已存在时拒绝重跑覆盖。
+
 ## 上下文成本控制
 
 Agent 循环每一步都会把完整对话历史重发给模型。一次 `read_paper` 返回约 6000
@@ -309,7 +381,9 @@ AGENT_CONTEXT_OLD_OBSERVATION_CHARS=600 # 更早的压到多少字符;0=关闭
 ```
 
 页面可选择 ReAct、Plan、Team、Auto；Auto 会显示实际选择的模式、策略版本、理由与耗时。
-按 `Ctrl+C` 停止本地服务。
+默认任务分工是“云端检索 · 本地总结”；模型分工和单模型都只影响新任务。后台任务的
+900 秒是协作式软超时，不是硬杀限制，可通过 `SCHOLARAGENT_JOB_SOFT_TIMEOUT_SECONDS`
+调整。按 `Ctrl+C` 停止本地服务。
 
 ## 开源治理
 

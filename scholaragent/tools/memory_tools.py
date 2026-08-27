@@ -9,7 +9,8 @@ recall 背后是手写的 BM25(见 memory.py),这正是 RAG(检索增强生成)
 """
 
 from ..memory import MemoryStore
-from ..tool import Tool
+from ..tool import Tool, ToolResult
+from ..workspace import Workspace
 
 
 class RememberTool(Tool):
@@ -33,11 +34,21 @@ class RememberTool(Tool):
         "required": ["content"],
     }
 
-    def __init__(self, store: MemoryStore = None):
-        self.store = store or MemoryStore()
+    def __init__(self, store: MemoryStore = None, workspace: Workspace | str = None):
+        self.store = store or MemoryStore(workspace=workspace)
 
     def run(self, content: str, source: str = "") -> str:
         return self.store.add(content, source)
+
+    def artifact_metadata(self, arguments, result: ToolResult):
+        if not result.success:
+            return []
+        return [{
+            "kind": "memory",
+            "text": str(arguments.get("content") or ""),
+            "source": str(arguments.get("source") or ""),
+            "path": self.store.path,
+        }]
 
 
 class RecallTool(Tool):
@@ -54,8 +65,8 @@ class RecallTool(Tool):
         "required": ["query"],
     }
 
-    def __init__(self, store: MemoryStore = None):
-        self.store = store or MemoryStore()
+    def __init__(self, store: MemoryStore = None, workspace: Workspace | str = None):
+        self.store = store or MemoryStore(workspace=workspace)
 
     def run(self, query: str) -> str:
         hits = self.store.search(query, top_k=3)

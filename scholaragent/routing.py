@@ -9,6 +9,8 @@ import json
 from dataclasses import asdict, dataclass
 from typing import Callable, Mapping
 
+from .gap_survey import is_gap_survey_task
+
 
 FEATURE_VERSION = "task-features-v1"
 POLICY_FORMAT_VERSION = "cost-aware-router-v1"
@@ -116,7 +118,10 @@ class RuleRouter:
         comparison = features["requires_multi_paper_comparison"]
         review = features["requires_review"]
 
-        if full_reading and (comparison or review):
+        if is_gap_survey_task(task):
+            mode = "plan"
+            reason = "检测到资料缺口，按四个方向拆分调研"
+        elif full_reading and (comparison or review):
             mode = "team"
             reason = "全文精读与" + ("多论文比较" if comparison else "综述任务")
         elif comparison or features["has_complex_constraints"] or features["action_goal_count"] >= 3:
@@ -148,12 +153,14 @@ class AdaptiveRunner:
         self.runners = dict(runners)
         self.last_decision = None
 
-    def run(self, task: str) -> str:
+    def run(self, task: str, context=None) -> str:
         decision = self.router.route(task)
         if decision.mode not in self.runners:
             raise ValueError(f"路由器返回了未知模式:{decision.mode}")
         self.last_decision = decision
         runner = self.runners[decision.mode]
+        if context is not None:
+            return context.invoke(runner, task)
         run: Callable[[str], str] = getattr(runner, "run", runner)
         return run(task)
 
@@ -203,6 +210,10 @@ class CostAwareRouter:
                 raise ValueError(f"模式 {mode} 的系数不完整")
 
     def route(self, task: str) -> RoutingDecision:
+        if is_gap_survey_task(task):
+            # 资料缺口任务需要确定性四路拆分；即使存在离线学习策略，
+            # 也不能让一次全局效用预测把四个方向压回单路执行。
+            return self.fallback.route(task)
         if self.policy is None:
             decision = self.fallback.route(task)
             warning = self.last_warning or "策略不可用"

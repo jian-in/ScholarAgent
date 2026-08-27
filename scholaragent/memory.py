@@ -23,6 +23,7 @@ import re
 import time
 
 from . import config
+from .workspace import Workspace, workspace_for
 
 # ―――――――――――――――――― 会话记忆 ――――――――――――――――――
 
@@ -153,11 +154,23 @@ class MemoryStore:
     也只损失那一行 —— 前提是加载时必须容错地跳过坏行,而不是崩溃。
     """
 
-    def __init__(self, path: str = None):
-        self.path = path or os.path.join(config.DATA_DIR, "memory", "memories.jsonl")
+    def __init__(self, path: str = None, workspace: Workspace | str = None):
+        if path is not None and workspace is not None:
+            raise ValueError("path 与 workspace 只能指定一个")
+        self.workspace = workspace_for(workspace) if workspace is not None else None
+        self._explicit_path = os.fspath(path) if path is not None else None
+        self._resolved_path = None
         self._entries = None   # 惰性加载
         self._index = None
         self._loaded_size = -1  # 上次加载时的文件大小,用于检测"别人写了新内容"
+
+    @property
+    def path(self) -> str:
+        """兼容旧代码的路径属性；未显式指定时在访问时解析当前默认工作区。"""
+        if self._explicit_path is not None:
+            return self._explicit_path
+        workspace = self.workspace or Workspace.from_config()
+        return str(workspace.memory_path)
 
     def _load(self):
         """加载记忆文件;若文件在加载后又被写过(别的实例/进程),自动重读。
@@ -167,8 +180,14 @@ class MemoryStore:
         加载的内存缓存会读到过期数据 —— 缓存失效是工程里最常见的坑之一,
         对策是每次读之前先核对文件有没有变。
         """
-        if os.path.exists(self.path):
-            stat = os.stat(self.path)
+        current_path = self.path
+        if current_path != self._resolved_path:
+            self._entries = None
+            self._index = None
+            self._loaded_size = -1
+            self._resolved_path = current_path
+        if os.path.exists(current_path):
+            stat = os.stat(current_path)
             current_stamp = (stat.st_size, stat.st_mtime_ns)  # 大小+修改时间双重核对
         else:
             current_stamp = None
@@ -176,8 +195,8 @@ class MemoryStore:
             return  # 文件没变,缓存可信
         self._entries = []
         skipped = 0
-        if os.path.exists(self.path):
-            with open(self.path, encoding="utf-8") as f:
+        if os.path.exists(current_path):
+            with open(current_path, encoding="utf-8") as f:
                 for line in f:
                     line = line.strip()
                     if not line:

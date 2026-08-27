@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import time
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -12,8 +13,9 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 from evals.run_eval import build_runner, isolate_eval_state
-from main import detect_ollama
+from scholaragent.runtime import detect_ollama
 from scholaragent import config
+from scholaragent.experiments import build_manifest, utc_now, write_manifest_file
 from scholaragent.metrics import MetricsCollector
 from scholaragent.routing import FEATURE_VERSION, ROUTING_MODES, TaskFeatureExtractor
 
@@ -78,7 +80,8 @@ def main():
     ensure_model()
     tasks = load_calibration_tasks(args.tasks)
     stamp = time.strftime("%Y%m%d_%H%M%S")
-    isolate_eval_state(f"router_calibration_{stamp}")
+    workspace = isolate_eval_state(f"router_calibration_{stamp}")
+    started_at = utc_now()
     os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
     extractor = TaskFeatureExtractor()
 
@@ -92,7 +95,11 @@ def main():
                     if run_id in completed:
                         continue
                     collector = MetricsCollector(mode)
-                    runner = build_runner(mode, metrics_collector=collector)
+                    runner = build_runner(
+                        mode,
+                        metrics_collector=collector,
+                        workspace=workspace,
+                    )
                     collector.restart()  # 排除执行器构建时间，只记录本次任务执行。
                     error = None
                     try:
@@ -100,7 +107,21 @@ def main():
                     except Exception as exc:
                         answer = ""
                         error = f"{type(exc).__name__}: {exc}"
+                    result = getattr(runner, "last_result", None)
+                    if result is not None:
+                        answer = result.answer if not error else answer
+                        error = error or result.error
+                    run_events = [
+                        {**dict(event), "run_id": run_id}
+                        for event in (result.events if result else ())
+                    ]
+                    artifacts = (
+                        runner.runtime.artifacts.to_dict()
+                        if result is not None and hasattr(runner, "runtime")
+                        else {}
+                    )
                     row = {
+                        "schema_version": "calibration-run-v2",
                         "run_id": run_id,
                         "task_id": task["id"],
                         "split": "calibration",
@@ -112,12 +133,37 @@ def main():
                         "features": extractor.extract(task["task"]),
                         "metrics": collector.finish().to_dict(),
                         "answer": answer,
+                        "status": result.status if result is not None else ("failed" if error else "completed"),
+                        "events": run_events,
+                        "artifacts": artifacts,
+                        "evidence": dict(result.evidence) if result is not None else {},
+                        "workflow": result.workflow if result is not None else None,
+                        "source_format": result.source_format if result is not None else None,
                         "error": error,
                         "quality": None,
                     }
                     handle.write(json.dumps(row, ensure_ascii=False) + "\n")
                     handle.flush()
                     print(f"{row['run_id']}: {row['metrics']['seconds']:.2f}s")
+
+    manifest_path = Path(args.output).with_suffix(".manifest.json")
+    if not manifest_path.exists():
+        manifest = build_manifest(
+            manifest_path.stem,
+            tasks=tasks,
+            model=config.LLM_MODEL,
+            config={
+                "repetitions": args.repetitions,
+                "feature_version": FEATURE_VERSION,
+                "routing_modes": list(ROUTING_MODES),
+            },
+            modes=ROUTING_MODES,
+            strategy_version="calibration-v1",
+            started_at=started_at,
+            ended_at=utc_now(),
+            score_states={"unscored": len(tasks) * len(ROUTING_MODES) * args.repetitions},
+        )
+        write_manifest_file(manifest, manifest_path)
 
 
 if __name__ == "__main__":

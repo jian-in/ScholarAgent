@@ -17,6 +17,7 @@
 
 from . import config
 from .agent import Agent
+from .events import RunContext
 
 SEARCHER_PROMPT = (
     "你是文献检索员。只负责用 arxiv_search 检索并筛选论文,不下载不精读。"
@@ -38,6 +39,8 @@ READER_PROMPT = (
 WRITER_PROMPT = (
     "你是综述写作员。根据检索报告和精读笔记撰写一份简明综述:"
     "研究背景、主要方法脉络、代表工作对比、开放问题。"
+    "每篇代表论文都要交代研究问题、核心机制、实验/评价结论和局限性，"
+    "让读者能看出论文到底解决了什么，而不是只复述摘要或给出空泛趋势。"
     "每个论点注明来源论文(标题 + arXiv 编号);"
     "材料里没有的内容不要编造,材料不足就明确说明缺口。"
     "需要回顾更多细节时可用 read_notes 和 recall 查阅。"
@@ -62,60 +65,83 @@ class ResearchTeam:
     """固定流水线:检索员 → 精读员 → 写作员。"""
 
     def __init__(self, llm, registry, verbose=True, require_full_paper=True,
-                 on_progress=None, should_stop=None):
+                 on_progress=None, should_stop=None, summary_llm=None):
         self.verbose = verbose
         self.on_progress = on_progress
         self.should_stop = should_stop
-        # 三个角色共享同一个模型层与工具实现,但各领各的工具白名单
+        self.research_llm = llm
+        self.summary_llm = summary_llm or llm
+        # 检索和精读由调研模型驱动；每个角色完成工具工作后，
+        # Agent 会把证据交给本地总结模型，写作员始终只使用总结模型。
         self.searcher = Agent(
-            llm, registry.subset(["arxiv_search", "recall"]),
+            self.research_llm, registry.subset(["arxiv_search", "recall"]),
             system_prompt=SEARCHER_PROMPT, max_steps=8, verbose=verbose,
             tool_call_limits={"arxiv_search": 2}, on_progress=on_progress,
-            should_stop=should_stop)
+            should_stop=should_stop, summary_llm=self.summary_llm)
         self.reader = Agent(
-            llm, registry.subset(["download_paper", "read_paper",
-                                  "save_note", "remember"]),
+            self.research_llm, registry.subset(["download_paper", "read_paper",
+                                                "save_note", "remember"]),
             system_prompt=READER_PROMPT,
             max_steps=config.PAPER_READER_MAX_STEPS, verbose=verbose,
             required_tool_completions=(
                 ["read_paper"] if require_full_paper else []),
             min_final_chars=300 if require_full_paper else 0,
-            on_progress=on_progress, should_stop=should_stop)
+            on_progress=on_progress, should_stop=should_stop,
+            summary_llm=self.summary_llm)
         self.writer = Agent(
-            llm, registry.subset(["read_notes", "recall"]),
+            self.summary_llm, registry.subset(["read_notes", "recall"]),
             system_prompt=WRITER_PROMPT, max_steps=6, verbose=verbose,
             on_progress=on_progress, should_stop=should_stop)
+        self.last_metrics = None
 
-    def run(self, topic: str) -> str:
+    def run(self, topic: str, context: RunContext = None) -> str:
         """围绕一个主题跑完整的调研流水线,返回综述。"""
         from .agent import CANCELLED_ANSWER
 
-        if self._stop_requested():
-            self._log("[取消] 用户已请求停止")
-            return CANCELLED_ANSWER
+        owns_context = context is None
+        context = context or RunContext(mode="team", should_stop=self.should_stop)
+        self._active_context = context
+        self._context_external = not owns_context
+        try:
+            if self._stop_requested():
+                self._log("[取消] 用户已请求停止")
+                return CANCELLED_ANSWER
 
-        self._log(f"[团队] 检索员开工:{topic}")
-        report = self.searcher.run(f"围绕主题「{topic}」检索并筛选论文,产出检索报告")
-        if report == CANCELLED_ANSWER or self._stop_requested():
-            self._log("[取消] 流水线在检索阶段后停止")
-            return CANCELLED_ANSWER
+            self._log(f"[团队] 检索员开工:{topic}")
+            report = context.invoke(
+                self.searcher,
+                f"围绕主题「{topic}」检索并筛选论文,产出检索报告",
+            )
+            if report == CANCELLED_ANSWER or self._stop_requested():
+                self._log("[取消] 流水线在检索阶段后停止")
+                return CANCELLED_ANSWER
 
-        self._log("[团队] 精读员开工")
-        notes = self.reader.run(
-            f"这是检索员的报告:\n{_clip(report)}\n\n"
-            f"请精读其中推荐的论文,产出精读笔记")
-        if notes == CANCELLED_ANSWER or self._stop_requested():
-            self._log("[取消] 流水线在精读阶段后停止")
-            return CANCELLED_ANSWER
+            self._log("[团队] 精读员开工")
+            notes = context.invoke(
+                self.reader,
+                f"这是检索员的报告:\n{_clip(report)}\n\n"
+                f"请精读其中推荐的论文,产出精读笔记",
+            )
+            if notes == CANCELLED_ANSWER or self._stop_requested():
+                self._log("[取消] 流水线在精读阶段后停止")
+                return CANCELLED_ANSWER
 
-        self._log("[团队] 写作员开工")
-        review = self.writer.run(
-            f"主题:{topic}\n\n检索报告:\n{_clip(report)}\n\n"
-            f"精读笔记:\n{_clip(notes)}\n\n请撰写综述")
-
-        return review
+            self._log("[团队] 写作员开工")
+            return context.invoke(
+                self.writer,
+                f"主题:{topic}\n\n检索报告:\n{_clip(report)}\n\n"
+                f"精读笔记:\n{_clip(notes)}\n\n请撰写综述",
+            )
+        finally:
+            self.last_metrics = (
+                context.metrics.finish() if owns_context else context.metrics.snapshot()
+            )
+            self._active_context = None
+            self._context_external = False
 
     def _stop_requested(self) -> bool:
+        if getattr(self, "_active_context", None) is not None:
+            return self._active_context.is_cancelled()
         if not self.should_stop:
             return False
         try:
@@ -124,7 +150,7 @@ class ResearchTeam:
             return False
 
     def _log(self, text: str):
-        if self.verbose:
+        if self.verbose and not getattr(self, "_context_external", False):
             print(text)
         if self.on_progress:
             try:

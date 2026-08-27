@@ -1,0 +1,13 @@
+{
+  "schema_version": "case-definition-v1",
+  "id": "resnet-method-evidence-v1",
+  "title": "ResNet 残差学习方法调研",
+  "task": "围绕 Deep Residual Learning for Image Recognition（arXiv:1512.03385）完成一次可核验的计算机视觉方法调研：检索该论文，阅读摘要与方法相关内容，说明残差学习如何通过 shortcut connection 训练更深的网络；列出至少两个具体设计点，给出论文标题、作者或 arXiv 编号作为出处，并根据论文内容指出至少一个局限或适用边界。不要只凭常识作答；若全文读取失败，明确说明证据缺口。",
+  "modes": ["react", "plan", "team"],
+  "rubric": {
+    "task_completion": "是否说明残差学习机制、至少两个设计点和至少一个局限或边界。",
+    "factual_correctness": "关于 shortcut connection、残差映射和深层网络训练的陈述是否与论文内容一致。",
+    "citation_validity": "论文标题、作者或 arXiv 标识是否明确且可核验，是否区分已读证据与证据缺口。",
+    "output_completeness": "回答是否结构清楚，并覆盖方法、具体设计点、来源与局限。"
+  }
+}

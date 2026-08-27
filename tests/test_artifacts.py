@@ -130,3 +130,11 @@ def test_workspace_returns_artifacts(monkeypatch):
     result = webapp.LocalWorkspace().run("调研", "react")
     assert result["artifacts"]["counts"]["notes"] == 1
     assert result["artifacts"]["counts"]["memories"] == 1
+
+
+def test_artifact_payload_includes_workspace_root(tmp_path):
+    """payload 必须带工作区绝对根目录,前端才能告诉用户"产物在哪"。"""
+    from pathlib import Path
+
+    payload = ArtifactCollector(tmp_path).to_dict()
+    assert Path(payload["root"]) == Path(tmp_path)

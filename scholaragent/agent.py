@@ -11,9 +11,9 @@ max_steps 是保险丝:防止模型陷入"无限调工具"的死循环,
 """
 
 from . import config
+from .events import RunContext
 from .llm import assistant_message
-from .metrics import MetricsCollector
-from .tool import STOP_RETRY_PREFIX
+from .tool import STOP_RETRY_PREFIX, ToolRegistry, ToolResult, adapt_tool_result
 
 DEFAULT_SYSTEM_PROMPT = (
     "你是一个严谨的智能助手。遇到需要计算、查询等无法凭空回答的问题时,"
@@ -26,6 +26,15 @@ CANCELLED_ANSWER = "(任务已取消)"
 # 旧工具结果被压缩后打上的标记(判断"已压缩过"就靠它,保证幂等)
 COMPRESSED_MARK = "较早的工具结果已压缩"
 
+# 云端调研模型完成工具调用后，交给本地模型的固定交接指令。
+# 这条边界放在 Agent 循环里，而不是只写在系统提示词里，才能确保
+# 总结调用确实不再拿到外部工具清单。
+LOCAL_SUMMARY_INSTRUCTION = (
+    "外部调研阶段已经结束，现在进入内部总结阶段。"
+    "请只根据上方已经获得的工具证据整理本步骤摘要，保留必要的出处和不确定性；"
+    "不要调用工具，不要补充材料中没有的事实。"
+)
+
 
 class JobCancelled(Exception):
     """用户请求取消当前任务(协作式,不强制杀线程)。"""
@@ -37,8 +46,10 @@ class Agent:
                  conversation=None, long_memory=None, auto_recall=False,
                  tool_call_limits=None, required_tool_completions=None,
                  min_final_chars=0, metrics_mode="react",
-                 on_progress=None, should_stop=None):
+                 on_progress=None, should_stop=None, summary_llm=None):
         self.llm = llm            # 只要求有 chat() 方法,真假模型皆可
+        # 可选的内部总结模型。None 或与主模型相同表示保持单模型行为。
+        self.summary_llm = summary_llm
         self.tools = tools        # ToolRegistry 实例
         self.system_prompt = system_prompt
         self.max_steps = max_steps
@@ -58,11 +69,19 @@ class Agent:
         self.min_final_chars = max(0, int(min_final_chars))
         self.metrics_mode = metrics_mode
         self.last_metrics = None
+        self._active_context = None
 
-    def run(self, task: str) -> str:
+    def run(self, task: str, context: RunContext = None) -> str:
         """执行一个任务,返回最终回答。"""
+        owns_context = context is None
+        context = context or RunContext(
+            mode=self.metrics_mode,
+            should_stop=self.should_stop,
+        )
+        self._active_context = context
+        self._context_external = not owns_context
         self.tools.start_run()
-        metrics = MetricsCollector(self.metrics_mode)
+        metrics = context.metrics
         # 有会话记忆就接着上次聊,没有就开新对话。
         # 注意 list(...) 复制:必须在副本上追加消息,任务被中断(如 Ctrl+C)时
         # 才不会把"只有工具调用、没有工具结果"的半截轮次漏进记忆 ——
@@ -93,6 +112,8 @@ class Agent:
         disabled_tools = set()
         tool_call_counts = {}
         remembered_arguments = {}
+        had_tool_evidence = False
+        summary_handed_off = False
         for step in range(1, self.max_steps + 1):
             if self._stop_requested():
                 self._log("[取消] 用户已请求停止,在下一步边界退出")
@@ -102,9 +123,12 @@ class Agent:
             # 发送前先压缩较早的工具结果:它们每一步都被整段重发,
             # 是 prompt token 的最大浪费(尤其 read_paper 的论文原文)
             self._compress_history(messages)
-            reply = self.llm.chat(
-                messages, tools=self.tools.schemas(exclude=disabled_tools))
-            metrics.record_llm_call(reply.get("usage"))
+            reply = context.chat(
+                self.llm,
+                messages,
+                tools=self.tools.schemas(exclude=disabled_tools),
+                step=step,
+            )
             messages.append(assistant_message(reply))
 
             # ② 判断:模型不再要求调工具,说明它认为任务完成了
@@ -122,6 +146,32 @@ class Agent:
                         ),
                     })
                     continue
+
+                if (
+                    had_tool_evidence
+                    and not summary_handed_off
+                    and self.summary_llm is not None
+                    and self.summary_llm is not self.llm
+                ):
+                    # 这是一次明确的模型交接：主模型负责外部调研，
+                    # 总结模型只看到已产生的证据，且拿不到任何工具 schema。
+                    summary_handed_off = True
+                    self._log("[模型] 外部调研完成，切换本地模型总结")
+                    messages.append({
+                        "role": "user",
+                        "content": LOCAL_SUMMARY_INSTRUCTION,
+                    })
+                    summary_reply = context.chat(
+                        self.summary_llm,
+                        messages,
+                        tools=None,
+                        step="summary",
+                    )
+                    messages.append(assistant_message(summary_reply))
+                    summarized = (summary_reply.get("content") or "").strip()
+                    if summarized:
+                        answer = summarized
+
                 if not answer:
                     messages.append({
                         "role": "user",
@@ -145,6 +195,7 @@ class Agent:
                 break
 
             # ③ 行动 + 观察:逐个执行模型点名的工具,结果回填进对话
+            had_tool_evidence = True
             if reply["content"]:
                 self._log(f"[第 {step} 步] 模型想法:{reply['content']}")
             for tc in reply["tool_calls"]:
@@ -157,22 +208,64 @@ class Agent:
                 limit = self.tool_call_limits.get(tool_name)
                 used = tool_call_counts.get(tool_name, 0)
                 if tool_name in disabled_tools:
-                    result = (f"{STOP_RETRY_PREFIX} 工具 {tool_name} 在本轮已停用。"
-                              "请根据已有信息作答并说明资料缺口。")
+                    tool_result = ToolResult(
+                        # 保留旧前缀只是模型可见的兼容文案；是否停用由
+                        # ``stop_retry`` 字段决定，不能从文案反推控制流。
+                        text=(f"{STOP_RETRY_PREFIX} 工具 {tool_name} 在本轮已停用。"
+                              "请根据已有信息作答并说明资料缺口。"),
+                        success=False,
+                        stop_retry=True,
+                        diagnostic={"kind": "tool_disabled"},
+                    )
+                    result = tool_result.text
                 elif limit is not None and used >= limit:
                     disabled_tools.add(tool_name)
-                    result = (f"{STOP_RETRY_PREFIX} 工具 {tool_name} 已达到本轮"
-                              f"调用上限 {limit} 次。请根据已有信息作答并说明资料缺口。")
+                    tool_result = ToolResult(
+                        text=(f"{STOP_RETRY_PREFIX} 工具 {tool_name} 已达到本轮调用上限 {limit} 次。"
+                              "请根据已有信息作答并说明资料缺口。"),
+                        success=False,
+                        stop_retry=True,
+                        diagnostic={"kind": "tool_call_limit", "limit": limit},
+                    )
+                    result = tool_result.text
                 elif tc.get("error"):
                     # 参数在模型层就没解析成功,直接把错误当结果回传给模型
+                    tool_result = ToolResult(
+                        text=tc["error"],
+                        success=False,
+                        diagnostic={"kind": "invalid_arguments"},
+                    )
                     result = tc["error"]
                 else:
                     arguments = self.tools.complete_required_arguments(
                         tool_name, tc["arguments"], remembered_arguments)
                     remembered_arguments.update(arguments)
                     tool_call_counts[tool_name] = used + 1
-                    result = self.tools.call(tool_name, arguments)
-                    if result.startswith(STOP_RETRY_PREFIX):
+                    # 外部旧代码可能在实例上 monkey-patch ``call``；保留
+                    # 这条 seam，同时让正常 ToolRegistry 走结构化结果入口。
+                    custom_call = (
+                        self.tools.__dict__.get("call")
+                        or getattr(type(self.tools), "call", None) is not ToolRegistry.call
+                    )
+                    if custom_call:
+                        if context is not None:
+                            context.emit("tool_started", name=tool_name, arguments=arguments)
+                            context.metrics.record_tool_call()
+                        tool_result = adapt_tool_result(self.tools.call(tool_name, arguments))
+                        if context is not None:
+                            context.emit(
+                                "tool_completed",
+                                name=tool_name,
+                                success=tool_result.success,
+                                stop_retry=tool_result.stop_retry,
+                                observation_preview=tool_result.text[:240],
+                                diagnostic=tool_result.diagnostic,
+                            )
+                    else:
+                        tool_result = self.tools.call_result(
+                            tool_name, arguments, context=context)
+                    result = tool_result.text
+                    if tool_result.stop_retry:
                         disabled_tools.add(tool_name)
                 self._log(f"[第 {step} 步] 工具返回:{result}")
                 messages.append({
@@ -190,7 +283,12 @@ class Agent:
         if self.conversation:
             user_message["content"] = original_task
             self.conversation.save(messages)
-        self.last_metrics = metrics.finish(self.tools.run_tool_calls)
+        self.last_metrics = (
+            metrics.finish(self.tools.run_tool_calls)
+            if owns_context else metrics.snapshot()
+        )
+        self._active_context = None
+        self._context_external = False
         return answer
 
     def _compress_history(self, messages: list):
@@ -228,6 +326,8 @@ class Agent:
                       f"(约省 {saved_chars} 字符)")
 
     def _stop_requested(self) -> bool:
+        if self._active_context is not None:
+            return self._active_context.is_cancelled()
         if not self.should_stop:
             return False
         try:
@@ -236,7 +336,9 @@ class Agent:
             return False
 
     def _log(self, text: str):
-        if self.verbose:
+        # 传入结构化运行上下文时，终端输出交给 CLI/Web 适配器；没有上下文
+        # 的旧直接调用仍保留原有 verbose 行为。
+        if self.verbose and not getattr(self, "_context_external", False):
             print(text)
         if self.on_progress:
             try:

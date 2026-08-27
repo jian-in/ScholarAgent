@@ -25,6 +25,24 @@ python -m venv .venv
 4. 提交前执行 `git diff --check`，并检查没有加入运行数据或本地配置。
 5. 发起 Pull Request，说明问题、方案、验证命令和结果。
 
+## 增加工具插件
+
+外部工具不需要修改 `BUILTIN_TOOLS`。创建一个继承
+`scholaragent.tool.Tool` 的类，声明唯一的 `name`、模型可读的 `description`、
+JSON Schema `parameters`、`run()` 和非空 `license`，再在自己的分发包中声明
+`scholaragent.tools` entry point：
+
+```toml
+[project.entry-points."scholaragent.tools"]
+word-count = "my_plugin:WordCountTool"
+```
+
+可以参考 [`examples/plugins/word_count_plugin.py`](examples/plugins/word_count_plugin.py)。
+运行时默认只注册内置工具；需要发现本机已安装插件时显式调用
+`ExecutionRuntime(discover_plugins=True)` 或 `runtime.discover_tool_plugins()`。
+发现失败、缺少许可信息和重复名称都会被隔离并返回诊断。项目不提供插件市场、
+远程下载或不可信代码执行；安装第三方插件前请先审查其来源与权限。
+
 ## Pull Request 检查清单
 
 - [ ] 改动范围单一，提交信息能够说明目的。

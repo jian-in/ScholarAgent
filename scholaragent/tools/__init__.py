@@ -11,6 +11,8 @@ from .clock import ClockTool
 from .memory_tools import RecallTool, RememberTool
 from .notes import ReadNotesTool, SaveNoteTool
 from .papers import DownloadPaperTool, ReadPaperTool
+from ..memory import MemoryStore
+from ..workspace import Workspace
 
 BUILTIN_TOOLS = [
     CalculatorTool(),
@@ -25,3 +27,24 @@ BUILTIN_TOOLS = [
     RememberTool(),
     RecallTool(),
 ]
+
+
+def build_builtin_tools(workspace: Workspace | str | None = None,
+                        memory_store: MemoryStore | None = None) -> list:
+    """为一次运行创建隔离的内置工具实例。
+
+    ``BUILTIN_TOOLS`` 保留给旧代码和简单示例；运行时、评测和 Web 都应
+    调用这个工厂，避免工具在不同任务间共享游标或持久化路径。
+    """
+    store = memory_store or MemoryStore(workspace=workspace)
+    return [
+        CalculatorTool(),
+        ClockTool(),
+        ArxivSearchTool(),
+        DownloadPaperTool(workspace),
+        ReadPaperTool(workspace),
+        SaveNoteTool(workspace),
+        ReadNotesTool(workspace),
+        RememberTool(store),
+        RecallTool(store),
+    ]

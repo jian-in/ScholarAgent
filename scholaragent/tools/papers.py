@@ -19,7 +19,9 @@ import httpx
 from pypdf import PdfReader
 
 from .. import config
-from ..tool import Tool
+from ..ocr import OCRPage, PageOCR, default_ocr
+from ..tool import Tool, ToolResult
+from ..workspace import Workspace, workspace_for
 
 # 新式编号如 2401.12345 / 2401.12345v2,老式编号如 cs/0112017 / math.GT/0309136
 _ID_PATTERN = re.compile(
@@ -35,10 +37,8 @@ def _validate_id(arxiv_id: str) -> str:
     return arxiv_id
 
 
-def _pdf_path(arxiv_id: str) -> str:
-    # 老式编号带斜杠,不能直接当文件名,统一替换成下划线
-    safe_name = arxiv_id.replace("/", "_")
-    return os.path.join(config.DATA_DIR, "papers", f"{safe_name}.pdf")
+def _pdf_path(arxiv_id: str, workspace: Workspace | str | None = None) -> str:
+    return str(workspace_for(workspace).paper_path(arxiv_id))
 
 
 class DownloadPaperTool(Tool):
@@ -55,9 +55,15 @@ class DownloadPaperTool(Tool):
         "required": ["arxiv_id"],
     }
 
+    def __init__(self, workspace: Workspace | str | None = None):
+        self.workspace = workspace
+
+    def _active_workspace(self) -> Workspace:
+        return workspace_for(self.workspace)
+
     def run(self, arxiv_id: str) -> str:
         arxiv_id = _validate_id(arxiv_id)
-        path = _pdf_path(arxiv_id)
+        path = _pdf_path(arxiv_id, self.workspace)
 
         if not os.path.exists(path):
             response = httpx.get(
@@ -88,13 +94,27 @@ class DownloadPaperTool(Tool):
         return (f"论文 {arxiv_id} 已就绪({size_kb} KB,共 {pages} 页),"
                 f"可以用 read_paper 开始阅读")
 
+    def artifact_metadata(self, arguments, result: ToolResult):
+        arxiv_id = str(arguments.get("arxiv_id") or "").strip()
+        path = self._active_workspace().paper_path(arxiv_id) if arxiv_id else None
+        if not result.success or not arxiv_id or path is None or not path.exists():
+            return []
+        return [{
+            "kind": "paper",
+            "arxiv_id": arxiv_id,
+            "path": str(path),
+            "exists": True,
+            "summary": result.text,
+        }]
+
 
 class ReadPaperTool(Tool):
     name = "read_paper"
     description = (
         "阅读已下载论文的文字内容。每次返回一段(默认约 6000 字符);"
         "结尾会给出下一段的位置参数;同一任务内后续调用即使省略位置，"
-        "也会从上次结束处继续，直到完整读完全文"
+        "也会从上次结束处继续，直到完整读完全文。遇到没有文字层的页面会"
+        "自动尝试 OCR，并用 [OCR] 标注可能存在的识别误差"
     )
     parameters = {
         "type": "object",
@@ -119,21 +139,49 @@ class ReadPaperTool(Tool):
     # 又能减少长论文所需的模型往返次数。仍可通过环境变量按模型调整。
     MAX_CHARS = config.PAPER_READER_CHUNK_CHARS
 
-    def __init__(self):
+    def __init__(self, workspace: Workspace | str | None = None,
+                 ocr: PageOCR | None = None):
+        self.workspace = workspace
+        self.ocr = ocr if ocr is not None else default_ocr()
         self._next_positions = {}
+        self._ocr_cache = {}
         self._completion_met = False
+        self._anchor_counter = 0
+        self._anchor_ids = {}
 
     def start_run(self):
         self._next_positions.clear()
+        self._ocr_cache.clear()
         self._completion_met = False
+        self._anchor_counter = 0
+        self._anchor_ids.clear()
 
     def completion_ready(self) -> bool:
         return self._completion_met
 
+    def _ocr_page(self, path, page: int) -> OCRPage:
+        key = (str(path), page)
+        cached = self._ocr_cache.get(key)
+        if cached is not None:
+            return cached
+        try:
+            result = self.ocr.read_page(path, page)
+            if not isinstance(result, OCRPage):
+                result = OCRPage(page=page, text=str(result or ""))
+        except Exception as exc:
+            result = OCRPage(
+                page=page,
+                text="",
+                confidence="low",
+                diagnostic=f"OCR 适配器失败: {type(exc).__name__}: {exc}",
+            )
+        self._ocr_cache[key] = result
+        return result
+
     def run(self, arxiv_id: str, start_page: int = None,
             start_char: int = None) -> str:
         arxiv_id = _validate_id(arxiv_id)
-        path = _pdf_path(arxiv_id)
+        path = _pdf_path(arxiv_id, self.workspace)
         if not os.path.exists(path):
             return f"论文 {arxiv_id} 还没下载,请先调用 download_paper"
 
@@ -155,10 +203,18 @@ class ReadPaperTool(Tool):
 
         chunks, used, any_text = [], 0, False
         next_pos = None  # 下一段的位置 (页, 页内偏移);None 表示读完了
+        ocr_attempted = False
         while page <= total:
             full = (reader.pages[page - 1].extract_text() or "").strip()
+            ocr_page = None
+            if not full:
+                ocr_attempted = True
+                ocr_page = self._ocr_page(path, page)
+                full = ocr_page.text
             body = full[offset:] if offset < len(full) else ""
             header = f"--- 第 {page} 页 ---\n"
+            if ocr_page is not None and ocr_page.text:
+                header += "[OCR] 本页由 OCR 提取，可能存在识别误差。\n"
             budget = self.MAX_CHARS - used - len(header)
             if budget <= 0:
                 next_pos = (page, offset)
@@ -178,7 +234,10 @@ class ReadPaperTool(Tool):
                 chunks.append(header + body)
             else:
                 # 图表页/扫描页没有文字层,如实说明(也计入预算,防止刷屏)
-                chunks.append(header + "(本页没有可提取的文字,可能是图表或扫描页)")
+                detail = "(本页没有可提取的文字,可能是图表或扫描页)"
+                if ocr_page is not None and ocr_page.diagnostic:
+                    detail += f"; OCR 未能获得文字: {ocr_page.diagnostic}"
+                chunks.append(header + detail)
             used += len(chunks[-1])
             page += 1
             offset = 0
@@ -187,8 +246,9 @@ class ReadPaperTool(Tool):
             # 扫描版属于终态：继续调同一工具也不会产生文字，允许 Agent
             # 结束并如实说明资料限制。
             self._completion_met = True
+            ocr_hint = "，已尝试 OCR" if ocr_attempted else ""
             return (f"论文 {arxiv_id} 的这些页面没有可提取的文字层"
-                    f"(可能是扫描版 PDF),read_paper 读不了这份文件")
+                    f"(可能是扫描版 PDF{ocr_hint}),read_paper 读不了这份文件")
         if next_pos is None:
             self._next_positions.pop(arxiv_id, None)
             self._completion_met = True
@@ -199,3 +259,39 @@ class ReadPaperTool(Tool):
             tail = (f"\n(还没读完;继续阅读请再次调用 read_paper,"
                     f"参数 start_page={p}, start_char={c})")
         return "\n".join(chunks) + tail
+
+    def artifact_metadata(self, arguments, result: ToolResult):
+        arxiv_id = str(arguments.get("arxiv_id") or "").strip()
+        if not result.success or not arxiv_id:
+            return []
+        metadata = {
+            "kind": "read",
+            "arxiv_id": arxiv_id,
+            "completed": self.completion_ready(),
+        }
+        anchors = []
+        pages = list(re.finditer(r"---\s*第\s*(\d+)\s*页\s*---", result.text))
+        for index, match in enumerate(pages):
+            page = int(match.group(1))
+            end = pages[index + 1].start() if index + 1 < len(pages) else len(result.text)
+            excerpt = result.text[match.end():end].strip()
+            anchor_key = (arxiv_id, page)
+            anchor_id = self._anchor_ids.get(anchor_key)
+            if anchor_id is None:
+                self._anchor_counter += 1
+                anchor_id = f"S{self._anchor_counter:03d}"
+                self._anchor_ids[anchor_key] = anchor_id
+            no_text = not excerpt or "没有可提取的文字" in excerpt
+            from_ocr = "[OCR]" in excerpt
+            anchors.append({
+                "id": anchor_id,
+                "kind": "page" if no_text else "text",
+                "source": f"arxiv:{arxiv_id}",
+                "page": page,
+                "locator": f"pdf-page:{page}:ocr" if from_ocr else f"pdf-page:{page}",
+                "confidence": "low" if no_text else ("medium" if from_ocr else "high"),
+                "excerpt": excerpt[:300],
+            })
+        if anchors:
+            metadata["source_anchors"] = anchors
+        return [metadata]

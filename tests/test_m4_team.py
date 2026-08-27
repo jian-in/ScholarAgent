@@ -104,6 +104,30 @@ def test_team_clips_long_handoffs():
     assert len(reader_prompt) < 13000
 
 
+def test_team_uses_research_model_for_search_and_local_model_for_writing():
+    """Team 的检索/精读与最终写作必须使用不同角色模型。"""
+    research = RecordingLLM([
+        final("检索报告"),
+        final("精读笔记"),
+    ])
+    summary = RecordingLLM([final("本地综述")])
+
+    team = ResearchTeam(
+        research,
+        ToolRegistry(BUILTIN_TOOLS),
+        summary_llm=summary,
+        verbose=False,
+        require_full_paper=False,
+    )
+
+    assert team.run("LLM Agent") == "本地综述"
+    assert len(research.history) == 2
+    assert len(summary.history) == 1
+    assert "检索员" in research.history[0][0]["content"]
+    assert "精读员" in research.history[1][0]["content"]
+    assert "写作员" in summary.history[0][0]["content"]
+
+
 if __name__ == "__main__":
     # 不依赖 pytest 的极简测试运行器
     for name, fn in sorted(globals().items()):

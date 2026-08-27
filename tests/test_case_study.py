@@ -150,12 +150,10 @@ def test_existing_runner_factory_exposes_case_study_evidence_seam(tmp_path, monk
 
 
 def test_run_case_isolates_each_modes_runtime_state(tmp_path):
-    from scholaragent import config
-
     observed = {}
 
-    def factory(mode, metrics_collector, on_progress, artifacts):
-        observed[mode] = config.DATA_DIR
+    def factory(mode, metrics_collector, on_progress, artifacts, workspace):
+        observed[mode] = workspace.root
         return FakeRunner(mode, metrics_collector, on_progress, artifacts)
 
     run_case(
@@ -165,9 +163,9 @@ def test_run_case_isolates_each_modes_runtime_state(tmp_path):
     )
 
     assert observed == {
-        "react": str(tmp_path / "state" / "react-method" / "react"),
-        "plan": str(tmp_path / "state" / "react-method" / "plan"),
-        "team": str(tmp_path / "state" / "react-method" / "team"),
+        "react": (tmp_path / "state" / "react-method" / "react").resolve(),
+        "plan": (tmp_path / "state" / "react-method" / "plan").resolve(),
+        "team": (tmp_path / "state" / "react-method" / "team").resolve(),
     }
 
 
@@ -288,10 +286,12 @@ def test_execute_case_study_keeps_private_state_outside_public_output(tmp_path):
 
     assert paths["state"] == state_dir
     assert state_dir.is_dir()
-    # 公开目录里只有可发布的运行记录与评分模板，不混入私有运行状态
+    # 公开目录只包含证据包文件，不混入私有运行状态
     assert sorted(p.name for p in output_dir.iterdir()) == [
+        "manifest.json",
         "runs.jsonl",
         "scores.template.jsonl",
+        "summary.md",
     ]
     # 默认行为不变：不传 state_dir 时仍是输出目录旁的同名 .state
     default_paths = execute_case_study(

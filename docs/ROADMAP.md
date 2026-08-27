@@ -18,14 +18,15 @@
 - [x] 五分钟演示黄金路径（`docs/demo-guide.md`），含离线重放兜底
 - [x] 评委首屏叙事与证据边界声明（README 首屏）
 - [x] 社区治理配套：Issue/PR 模板、CI、行为准则、维护说明
-- [ ] 参赛材料（介绍 PDF、演示视频、封面图）——文字稿见 `docs/contest/`
+- [x] 参赛材料文字源稿（介绍 Markdown/PDF 源稿、答辩图表、封面文案、视频分镜）——见 `docs/contest/`
+- [ ] 导出 PDF、录制视频并制作封面图（需现场素材与外部发布确认）
 
 DoD：新环境按 README 从安装到看到演示不超过 5 分钟，失败可切换离线重放。
 
 ### 2026 Q4：可安装与可扩展
 
-- [ ] `pyproject.toml` 打包，支持 `pip install`；版本化发布（v0.1.0）
-- [ ] 工具插件接口：第三方工具可不改核心代码注册进 `ToolRegistry`
+- [x] `pyproject.toml` 打包候选，支持 `pip install`；版本 `v0.1.0-rc1`
+- [x] 工具插件接口：第三方工具可不改核心代码注册进 `ToolRegistry`
 - [ ] 评测任务集扩展：社区可提交的公开任务（含预期证据锚点）
 
 DoD：`pip install` 后 `scholaragent` 命令可用；新工具通过注册接口接入并有
@@ -56,7 +57,7 @@ DoD：`pip install` 后 `scholaragent` 命令可用；新工具通过注册接�
 2. 为 `evals/tasks.jsonl` 撰写 3 个新调研任务（含可核验的关键词锚点）
 3. README 英文翻译（待中文文案稳定后启动）
 4. 本地工作台界面打磨：任务状态、错误提示、产物预览
-5. CI 扩展：Python 3.10 / 3.12 兼容性矩阵
+5. CI 扩展：Python 3.10 / 3.11 / 3.12 兼容性矩阵（已写入 CI）
 
 领取方式：在对应 Issue 下留言认领；修改流程见
 [CONTRIBUTING.md](../CONTRIBUTING.md)。

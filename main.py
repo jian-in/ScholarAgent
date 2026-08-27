@@ -22,116 +22,16 @@ if hasattr(sys.stdout, "reconfigure"):
 
 from scholaragent import config
 from scholaragent.agent import Agent
-from scholaragent.llm import LLMClient, ScriptedLLM
-from scholaragent.memory import ConversationMemory, MemoryStore
-from scholaragent.planner import Planner
+from scholaragent.events import event_message
 from scholaragent.routing import AdaptiveRunner, CostAwareRouter
-from scholaragent.team import ResearchTeam
-from scholaragent.tool import ToolRegistry
-from scholaragent.tools import BUILTIN_TOOLS
-
-def detect_ollama(prefer: str = None):
-    """探测本机的 Ollama 服务,返回一个"能对话且支持工具调用"的模型名。
-
-    M5 的"零配置本地模型":没配 API Key 但装了 Ollama 的机器,
-    直接用本地模型跑,不花钱、不联网、数据不出本机。
-
-    不能盲选列表第一个:机器上常同时拉着 embedding 专用模型(nomic-embed
-    等,根本不会聊天)或不支持工具调用的模型 —— 按 Ollama 返回的
-    capabilities 元数据过滤(老版本没有该字段时从宽放行),这也是
-    "用服务的元数据做能力探测"的一个小教学点。
-    """
-    import httpx
-    try:
-        resp = httpx.get("http://localhost:11434/api/tags", timeout=2)
-        candidates = []
-        for m in resp.json().get("models", []):
-            name = m.get("name")
-            if not name:
-                continue
-            caps = m.get("capabilities")
-            if caps is not None and ("completion" not in caps
-                                     or "tools" not in caps):
-                continue  # 不会对话或不支持工具调用,跳过
-            if any(x in name.lower() for x in ("embed", "rerank")):
-                continue  # 名字兜底过滤,防老版本漏掉 capabilities
-            candidates.append(name)
-        if not candidates:
-            return None
-        # .env 里指定过 LLM_MODEL 且本机恰好有,就尊重用户的选择
-        if prefer in candidates:
-            return prefer
-        return candidates[0]
-    except Exception:
-        return None  # 服务没开/没装,都不算错误,回落到其他方式
-
-
-# 离线演示的"剧本":假模型先调计算器,再给最终回答,
-# 让你不花一分钱就能看到 Agent 循环的完整流程。
-DEMO_SCRIPT = [
-    {
-        "content": "这个乘法我需要用计算器算一下。",
-        "tool_calls": [
-            {"id": "call_demo_1", "name": "calculator",
-             "arguments": {"expression": "(3+5)*12"}},
-        ],
-    },
-    {"content": "计算完成:(3+5)*12 = 96。", "tool_calls": []},
-]
-
-
-# 文献调研场景的系统提示词:告诉模型有哪些工具、按什么流程用。
-# 提示词也是"代码"—— 它直接决定 Agent 的行为质量,值得反复打磨。
-RESEARCH_SYSTEM_PROMPT = (
-    "你是一个严谨的科研文献调研助手。建议的工作流程:"
-    "先用 arxiv_search 检索相关论文;需要细读时用 download_paper 下载,"
-    "再用 read_paper 分段阅读(结尾会提示下一页,可多次调用翻页);"
-    "重要发现随手用 save_note 记录;任务开始时可用 read_notes 回顾之前的笔记。"
-    "值得跨对话记住的结论用 remember 存入长期记忆,想不起来的事用 recall 检索。"
-    "回答时必须注明信息来自哪篇论文(标题 + arXiv 编号);"
-    "论文里没有的内容不要编造;遇到计算用 calculator,问时间用 current_time。"
+from scholaragent.runtime import (
+    DEMO_SCRIPT,
+    RESEARCH_SYSTEM_PROMPT,
+    build_agent,
+    build_runners,
+    detect_ollama,
 )
-
-
-def build_agent(demo: bool, artifacts=None) -> Agent:
-    # 让 remember/recall 工具和 Agent 的自动回忆共用同一个 MemoryStore 实例:
-    # 一处写入、处处立即可见,不依赖文件同步的兜底机制
-    store = MemoryStore()
-    from scholaragent.tools.memory_tools import RecallTool, RememberTool
-    tools = [t for t in BUILTIN_TOOLS if t.name not in ("remember", "recall")]
-    registry = ToolRegistry(
-        tools + [RememberTool(store), RecallTool(store)],
-        artifacts=artifacts,
-    )
-
-    llm = ScriptedLLM(DEMO_SCRIPT) if demo else LLMClient()
-    # 文献任务一轮要检索+下载+翻好几页,步数上限给宽一些。
-    # M2:交互模式共用一份会话记忆(多轮对话)和长期记忆(自动回忆开启)
-    return Agent(llm, registry, system_prompt=RESEARCH_SYSTEM_PROMPT, max_steps=15,
-                 conversation=ConversationMemory(), long_memory=store,
-                 auto_recall=True, tool_call_limits={"arxiv_search": 3})
-
-
-def build_runners(agent: Agent, on_progress=None, should_stop=None,
-                  artifacts=None) -> dict:
-    """组装三种既有执行器，供 CLI 与自动路由共用。"""
-    if on_progress is not None:
-        agent.on_progress = on_progress
-    if should_stop is not None:
-        agent.should_stop = should_stop
-    if artifacts is not None and getattr(agent, "tools", None) is not None:
-        agent.tools.artifacts = artifacts
-    worker = Agent(agent.llm, agent.tools,
-                   system_prompt=RESEARCH_SYSTEM_PROMPT, max_steps=15,
-                   tool_call_limits={"arxiv_search": 3}, metrics_mode="plan",
-                   on_progress=on_progress, should_stop=should_stop)
-    return {
-        "react": agent,
-        "plan": Planner(agent.llm, worker, on_progress=on_progress,
-                        should_stop=should_stop),
-        "team": ResearchTeam(agent.llm, agent.tools, on_progress=on_progress,
-                             should_stop=should_stop),
-    }
+from scholaragent.workspace import default_workspace
 
 
 CLI_MODES = ("react", "plan", "team", "auto")
@@ -229,10 +129,23 @@ def run_task_with_mode(agent: Agent, mode: str, task: str) -> tuple[str, str]:
     if mode not in CLI_MODES:
         raise ValueError(f"未知模式:{mode}")
 
+    runtime = getattr(agent, "_runtime", None)
+    if runtime is not None:
+        # CLI 是运行事件的打印适配器；核心执行层不再决定终端格式。
+        result = runtime.run(task, mode=mode, event_sink=lambda event: print(event_message(event)))
+        if result.status == "failed":
+            raise RuntimeError(result.error or "运行失败")
+        executed = result.mode or mode
+        # ReAct 旧入口原本在 verbose 日志里打印最终回答；事件协议只传
+        # 完成状态，因此在 CLI 适配器这里补回同一可见行为。
+        if executed == "react" and result.answer:
+            print("\n" + result.answer)
+        return result.answer, executed
+
     runners = build_runners(agent)
     if mode == "auto":
         adaptive = AdaptiveRunner(
-            CostAwareRouter(config.ROUTER_POLICY_PATH), runners
+            CostAwareRouter(str(default_workspace().router_policy_path)), runners
         )
         answer = adaptive.run(task)
         decision = adaptive.last_decision
@@ -259,6 +172,17 @@ def _print_mode_answer(request_mode: str, executed_mode: str, answer: str) -> No
     if request_mode == "react" or executed_mode == "react":
         return
     print("\n" + answer)
+
+
+def _print_artifact_locations() -> None:
+    """任务结束后告知产物落盘位置——"输出在哪"不该让用户自己猜。"""
+    from scholaragent.workspace import Workspace
+
+    workspace = Workspace()
+    print("\n本轮产物位置:")
+    print(f"  论文 PDF:{workspace.papers_dir}")
+    print(f"  研究笔记:{workspace.notes_path}")
+    print(f"  长期记忆:{workspace.memory_path}")
 
 
 def interactive_loop(agent: Agent, initial_mode: str = "react"):
@@ -292,6 +216,7 @@ def interactive_loop(agent: Agent, initial_mode: str = "react"):
         try:
             answer, executed = run_task_with_mode(agent, mode, task)
             _print_mode_answer(mode, executed, answer)
+            _print_artifact_locations()
         except KeyboardInterrupt:
             print("\n(本轮任务已中断,可以继续提问)")
         except Exception as exc:
@@ -348,6 +273,7 @@ def main():
         try:
             answer, executed = run_task_with_mode(agent, mode, " ".join(task_args))
             _print_mode_answer(mode, executed, answer)
+            _print_artifact_locations()
         except KeyboardInterrupt:
             print("\n(本轮任务已中断)")
             sys.exit(130)

@@ -6,7 +6,7 @@
 
 ## 演示前准备（前一天完成）
 
-- [ ] `.\.venv\Scripts\python.exe -m pytest -q` 全绿（当前 133 项）
+- [ ] `.\.venv\Scripts\python.exe -m pytest -q` 全绿（当前 130+ 项）
 - [ ] `.env` 中 API Key 可用，或本机 Ollama 已运行（`main.py` 会自动探测）
 - [ ] 打开三个窗口备用：本 README、本地工作台（`start.bat`）、
       [`docs/case-study.md`](case-study.md)

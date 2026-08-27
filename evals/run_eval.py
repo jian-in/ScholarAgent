@@ -14,24 +14,22 @@ import argparse
 import os
 import sys
 import time
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-from main import RESEARCH_SYSTEM_PROMPT, detect_ollama  # noqa: E402
 from scholaragent import config  # noqa: E402
-from scholaragent.agent import Agent  # noqa: E402
 from scholaragent.evaluate import Evaluator, load_tasks, write_report  # noqa: E402
+from scholaragent.experiments import build_manifest, utc_now, write_manifest_file  # noqa: E402
 from scholaragent.llm import LLMClient  # noqa: E402
-from scholaragent.memory import MemoryStore  # noqa: E402
-from scholaragent.metrics import InstrumentedLLM, InstrumentedTool  # noqa: E402
-from scholaragent.planner import Planner  # noqa: E402
-from scholaragent.team import ResearchTeam  # noqa: E402
-from scholaragent.tool import ToolRegistry  # noqa: E402
-from scholaragent.tools import BUILTIN_TOOLS  # noqa: E402
-from scholaragent.tools.memory_tools import RecallTool, RememberTool  # noqa: E402
+from scholaragent.runtime import (  # noqa: E402
+    create_runtime,
+    detect_ollama,
+)
+from scholaragent.workspace import TemporaryWorkspace  # noqa: E402
 
 
 def isolate_eval_state(stamp: str):
@@ -40,33 +38,27 @@ def isolate_eval_state(stamp: str):
     不隔离的话:mem-1 上一次运行存的记忆会让这一次"免检得分",
     评测垃圾还会永久混进用户真实的研究笔记 —— 实验必须可复现、可清理。
     """
-    config.DATA_DIR = os.path.join("evals", "results", f"data_{stamp}")
+    return TemporaryWorkspace(os.path.join("evals", "results", f"data_{stamp}"))
 
 
-def build_runner(mode: str, metrics_collector=None, on_progress=None, artifacts=None):
+def build_runner(mode: str, metrics_collector=None, on_progress=None, artifacts=None,
+                 workspace=None):
     """按模式组装被测对象:三者都有 run(task)->str 接口。"""
-    llm = LLMClient()
-    if metrics_collector is not None:
-        llm = InstrumentedLLM(llm, metrics_collector)
-    # 记忆工具要用"现在"的 DATA_DIR 重新构建(BUILTIN_TOOLS 里的
-    # 那两个在 import 时就绑定了真实 data/ 路径,不能直接用)
-    store = MemoryStore()
-    tools = [t for t in BUILTIN_TOOLS if t.name not in ("remember", "recall")]
-    tools += [RememberTool(store), RecallTool(store)]
-    if metrics_collector is not None:
-        tools = [InstrumentedTool(tool, metrics_collector) for tool in tools]
-    registry = ToolRegistry(tools, artifacts=artifacts)
-    if mode == "react":
-        # 评测用的 Agent 不带会话记忆:每道题独立作答,分数才可比
-        return Agent(llm, registry, system_prompt=RESEARCH_SYSTEM_PROMPT,
-                     max_steps=15, verbose=False, on_progress=on_progress)
-    if mode == "plan":
-        worker = Agent(llm, registry, system_prompt=RESEARCH_SYSTEM_PROMPT,
-                       max_steps=15, verbose=False, on_progress=on_progress)
-        return Planner(llm, worker, verbose=False, on_progress=on_progress)
-    if mode == "team":
-        return ResearchTeam(llm, registry, verbose=False, on_progress=on_progress)
-    raise ValueError(f"未知模式:{mode}")
+    runtime = create_runtime(
+        llm=LLMClient(),
+        workspace=workspace,
+        artifacts=artifacts,
+        conversation=False,
+        auto_recall=False,
+    )
+    for runner in runtime.runners.values():
+        if hasattr(runner, "verbose"):
+            runner.verbose = False
+    return runtime.runner(
+        mode,
+        metrics_collector=metrics_collector,
+        on_progress=on_progress,
+    )
 
 
 def main():
@@ -93,12 +85,27 @@ def main():
     print(f"模式:{args.mode}  模型:{config.LLM_MODEL}  任务数:{len(tasks)}\n")
 
     stamp = time.strftime("%m%d_%H%M%S")
-    isolate_eval_state(stamp)  # 必须在 build_runner 之前:隔离评测读写的数据
+    started_at = utc_now()
+    workspace = isolate_eval_state(stamp)
 
-    rows = Evaluator(build_runner(args.mode), mode=args.mode).run(tasks)
+    rows = Evaluator(
+        build_runner(args.mode, workspace=workspace), mode=args.mode
+    ).run(tasks)
 
     report = os.path.join("evals", "results", f"report_{args.mode}_{stamp}.md")
     avg = write_report(rows, report)
+    manifest = build_manifest(
+        Path(report).stem,
+        tasks=tasks,
+        model=config.LLM_MODEL,
+        config={"mode": args.mode, "limit": args.limit},
+        modes=(args.mode,),
+        strategy_version="fixed-eval-v2",
+        started_at=started_at,
+        ended_at=utc_now(),
+        score_states={"unscored": len(rows)},
+    )
+    write_manifest_file(manifest, Path(report).with_suffix(".manifest.json"))
     print(f"\n平均得分:{avg:.2f}  报告:{report}")
 
 

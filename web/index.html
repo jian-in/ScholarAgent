@@ -31,7 +31,27 @@
             <p class="section-kicker">科研文献调研</p>
             <h1>把任务交给合适的执行方式。</h1>
           </div>
-          <div class="model-state" id="model-state">本地模型状态加载中</div>
+          <div class="model-tools">
+            <div class="model-state" id="model-state">模型状态加载中</div>
+            <div class="model-switch" aria-label="模型切换">
+                <label for="model-selector">单模型 / 备用模型</label>
+              <div class="model-switch-row">
+                <select id="model-selector" disabled>
+                  <option value="">正在加载可用模型…</option>
+                </select>
+                <button class="model-button" type="button" id="apply-model" disabled>切换</button>
+              </div>
+              <small id="model-hint">模型切换只影响新任务。</small>
+              <div class="routing-switch" id="model-routing" aria-label="任务模型分工">
+                <label>任务模型分工</label>
+                <div class="routing-buttons">
+                  <button type="button" id="single-routing">单模型</button>
+                  <button type="button" id="split-routing">云端检索 · 本地总结</button>
+                </div>
+                <small id="routing-hint">正在读取双模型分工状态…</small>
+              </div>
+            </div>
+          </div>
         </header>
 
         <section class="workspace-grid" id="workspace" aria-label="任务工作区">
@@ -49,6 +69,8 @@
               <button type="button" data-example="查找 ReAct 论文的标题、第一作者和 arXiv 编号。">查论文信息</button>
               <button type="button" data-example="先检索相关论文，再阅读方法部分并保存笔记。">多步阅读</button>
               <button type="button" data-example="检索并阅读全文，比较三篇论文，撰写研究脉络综述和开放问题。">证据化综述</button>
+              <button type="button" data-example-mode="plan" data-example="快速补齐当前研究的四项资料缺口：推理能力（重点 CoT、ToT）；Agent 工具使用（Tool Use）；2024-2025 年最新进展的系统性综述；硬件与推理效率（inference optimization）。请全部开始调研，只做摘要筛选，不下载 PDF、不做全文精读，并标注摘要级证据。">快速补齐四项缺口</button>
+              <button type="button" data-example-mode="plan" data-example="深度补齐当前研究的四项资料缺口：推理能力（重点 CoT、ToT）；Agent 工具使用（Tool Use）；2024-2025 年最新进展的系统性综述；硬件与推理效率（inference optimization）。请全部开始调研，每个方向至少精读 1 篇论文，并说明核心问题、核心方法、实验结论、局限和证据页码。">深度补齐四项缺口</button>
             </div>
             <div class="mode-row" aria-label="执行模式">
               <span>执行方式</span>
@@ -88,12 +110,30 @@
               <p class="section-kicker">执行记录</p>
               <h2>本轮结果</h2>
             </div>
-            <div class="result-actions">
-              <button class="text-button" type="button" id="copy-answer" hidden>复制回答</button>
-              <span class="run-state" id="run-state">就绪</span>
+          <div class="result-actions">
+            <button class="text-button" type="button" id="copy-answer" hidden>复制回答</button>
+            <span class="run-state" id="run-state">就绪</span>
+          </div>
+          </div>
+          <div class="saved-case-panel" aria-label="已保存案例回放">
+            <div>
+              <p class="section-kicker">证据回放</p>
+              <h3>已保存案例</h3>
             </div>
+            <div class="saved-case-controls">
+              <label class="sr-only" for="case-selector">选择已保存案例</label>
+              <select id="case-selector">
+                <option value="">正在加载公开案例…</option>
+              </select>
+              <button class="text-button" type="button" id="replay-case">回放</button>
+            </div>
+            <p class="saved-case-state" id="saved-case-state">实时运行与历史回放使用同一结果展示。</p>
           </div>
           <div class="progress-log" id="progress-log" hidden aria-label="实时步骤日志"></div>
+          <div class="timeline-panel" id="event-timeline" hidden aria-label="事件时间线">
+            <p class="section-kicker">事件时间线</p>
+            <div id="timeline-body"></div>
+          </div>
           <div class="artifacts-panel" id="artifacts-panel" hidden aria-label="本轮产物">
             <p class="section-kicker">本轮产物</p>
             <div id="artifacts-body"></div>

@@ -21,6 +21,14 @@ import time
 ALL_MODES = ("react", "plan", "team")
 
 
+def _event_rows(result, run_id: str) -> list[dict]:
+    """把运行时内部事件投影到评测记录的稳定运行 ID。"""
+    return [
+        {**dict(event), "run_id": run_id}
+        for event in (getattr(result, "events", ()) if result is not None else ())
+    ]
+
+
 def load_tasks(path: str, mode: str = None) -> list:
     """读取评测任务集(JSONL);给定 mode 时只留适用该模式的任务。"""
     tasks = []
@@ -73,19 +81,38 @@ class Evaluator:
             if self.verbose:
                 print(f"[评测 {i}/{len(tasks)}] {task['id']}: {task['task'][:40]}")
             start = time.time()
+            result = None
+            error = None
             try:
                 answer = self.runner.run(task["task"])
             except Exception as exc:
                 # 单题崩溃记 0 分继续,不能让一道题毁掉整场评测
                 answer = f"(执行出错:{type(exc).__name__}: {exc})"
+                error = f"{type(exc).__name__}: {exc}"
+            result = getattr(self.runner, "last_result", None)
+            if result is not None:
+                answer = result.answer if not error else answer
+                error = error or result.error
             seconds = round(time.time() - start, 1)
             score = score_answer(answer, task.get("expect", []))
             rows.append({
+                "schema_version": "fixed-eval-v2",
                 "id": task["id"],
+                "run_id": f"{task['id']}:{self.mode}:1",
                 "mode": self.mode,
                 "score": round(score, 2),
                 "seconds": seconds,
                 "answer_preview": str(answer)[:200],
+                "answer": answer,
+                "status": result.status if result is not None else ("failed" if error else "completed"),
+                "events": _event_rows(result, f"{task['id']}:{self.mode}:1"),
+                "metrics": result.metrics.to_dict() if result is not None else None,
+                "artifacts": dict(result.artifacts) if result is not None else {},
+                "evidence": dict(result.evidence) if result is not None else {},
+                "workflow": result.workflow if result is not None else None,
+                "source_format": result.source_format if result is not None else None,
+                "error": error,
+                "score_state": "unscored",
             })
             if self.verbose:
                 print(f"  得分 {score:.2f},耗时 {seconds}s")

@@ -11,15 +11,45 @@ from openai import OpenAI
 from . import config
 
 
+def _infer_provider(base_url):
+    normalized = str(base_url or "").lower().rstrip("/")
+    if normalized in {
+        "http://localhost:11434/v1",
+        "http://127.0.0.1:11434/v1",
+    }:
+        return "ollama"
+    return "cloud" if normalized else "unknown"
+
+
 class LLMClient:
     """真实的大模型客户端,走 OpenAI 兼容协议(国内主流厂商都支持)。"""
 
-    def __init__(self, base_url=None, api_key=None, model=None):
+    def __init__(self, base_url=None, api_key=None, model=None,
+                 provider=None, role="general"):
         self.model = model or config.LLM_MODEL
-        self._client = OpenAI(
-            base_url=base_url or config.LLM_BASE_URL,
-            api_key=api_key or config.LLM_API_KEY,
-        )
+        self.provider = provider or _infer_provider(base_url or config.LLM_BASE_URL)
+        self.role = role or "general"
+        self._base_url = base_url or config.LLM_BASE_URL
+        self._api_key = api_key or config.LLM_API_KEY
+        # 延迟创建 SDK 客户端：Windows 首次构造 httpx/SSL 代理上下文可能
+        # 很慢，不能让工作台的“提交任务”或后台线程在真正运行前卡住。
+        self._client = None
+
+    def _client_instance(self):
+        if self._client is None:
+            self._client = OpenAI(
+                base_url=self._base_url,
+                api_key=self._api_key,
+            )
+        return self._client
+
+    def metadata(self):
+        """返回可写入运行轨迹的安全元数据，不包含密钥。"""
+        return {
+            "role": self.role,
+            "provider": self.provider,
+            "model": self.model,
+        }
 
     def chat(self, messages, tools=None):
         """发送整段对话历史,拿回模型的一条回复。
@@ -33,7 +63,7 @@ class LLMClient:
              "tool_calls": [{"id": ..., "name": ..., "arguments": 参数字典,
                              "error": None 或参数解析失败时的提示文字}]}
         """
-        response = self._client.chat.completions.create(
+        response = self._client_instance().chat.completions.create(
             model=self.model,
             messages=messages,
             tools=tools if tools else None,  # 空列表有些厂商会报错,统一转成 None
@@ -77,9 +107,20 @@ class ScriptedLLM:
     这正是把模型单独封装成一层的最大好处。
     """
 
-    def __init__(self, replies):
+    def __init__(self, replies, model="scripted", provider="offline",
+                 role="general"):
         self._replies = list(replies)
         self.last_messages = None  # 记录最近一次收到的对话历史,供测试断言
+        self.model = model
+        self.provider = provider
+        self.role = role or "general"
+
+    def metadata(self):
+        return {
+            "role": self.role,
+            "provider": self.provider,
+            "model": self.model,
+        }
 
     def chat(self, messages, tools=None):
         self.last_messages = [dict(m) for m in messages]

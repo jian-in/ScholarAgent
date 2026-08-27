@@ -15,7 +15,7 @@ import xml.etree.ElementTree as ET
 
 import httpx
 
-from ..tool import STOP_RETRY_PREFIX, Tool
+from ..tool import STOP_RETRY_PREFIX, Tool, ToolResult, adapt_tool_result
 
 API_URL = "https://export.arxiv.org/api/query"
 OPENALEX_API_URL = "https://api.openalex.org/works"
@@ -186,6 +186,18 @@ class ArxivSearchTool(Tool):
         if not papers:
             return f"没有找到与「{query}」相关的论文,请换个英文关键词试试"
         return _format_papers(papers[:max_results])
+
+    def run_result(self, query: str, max_results: int = 5) -> ToolResult:
+        """把旧文字出口转换为结构化临时失败，不把控制前缀交给模型。"""
+        legacy = self.run(query, max_results)
+        if legacy.startswith(STOP_RETRY_PREFIX):
+            return ToolResult(
+                text=legacy[len(STOP_RETRY_PREFIX):].lstrip(),
+                success=False,
+                stop_retry=True,
+                diagnostic={"kind": "temporary_service_failure"},
+            )
+        return adapt_tool_result(legacy)
 
     def _fallback_result(self, query: str, max_results: int,
                          arxiv_error: str,

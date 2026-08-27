@@ -138,6 +138,31 @@ def test_planner_reflect_gibberish_passes():
     assert planner.run("查") == "结果"
 
 
+def test_planner_uses_cloud_for_plan_and_local_for_reflection_and_synthesis():
+    """Plan 的外部调研步骤走主模型，反思和最终汇总走本地模型。"""
+    research = RecordingLLM([
+        final('["检索资料", "整理证据"]'),
+        final("资料结果 A"),
+        final("证据结果 B"),
+    ])
+    summary = RecordingLLM([
+        final('{"ok": true}'),
+        final('{"ok": true}'),
+        final("本地最终综述"),
+    ])
+    agent = Agent(research, ToolRegistry([CalculatorTool()]), verbose=False)
+    planner = Planner(
+        research,
+        agent,
+        summary_llm=summary,
+        verbose=False,
+    )
+
+    assert planner.run("调研并整理资料") == "本地最终综述"
+    assert len(research.history) == 3
+    assert len(summary.history) == 3
+
+
 if __name__ == "__main__":
     # 不依赖 pytest 的极简测试运行器
     for name, fn in sorted(globals().items()):
@@ -145,3 +170,33 @@ if __name__ == "__main__":
             fn()
             print(f"通过:{name}")
     print("全部测试通过")
+
+
+def test_synthesize_keeps_step_conclusion_tail():
+    """汇总材料超预算时必须保头保尾:步骤结论(常在结尾)不能被砍掉。
+
+    曾用"只保开头 1200 字符"导致最终回答看不到各步结论,
+    输出显得残缺——这正是本测试守护的回归点。
+    """
+    tail_marker = "TAIL_CONCLUSION_结论在结尾"
+    middle_marker = "MIDDLE_GAP_中间应被砍掉"
+    long_result = "x" * 2500 + middle_marker + "y" * 1500 + tail_marker
+    assert len(long_result) > 4000
+
+    research = RecordingLLM([
+        final('["阅读论文", "撰写综述"]'),
+        final(long_result),
+        final("第二步的普通结果"),
+    ])
+    summary = RecordingLLM([
+        final('{"ok": true}'),
+        final('{"ok": true}'),
+        final("最终综述"),
+    ])
+    agent = Agent(research, ToolRegistry([CalculatorTool()]), verbose=False)
+    planner = Planner(research, agent, summary_llm=summary, verbose=False)
+
+    assert planner.run("调研并整理资料") == "最终综述"
+    synthesize_prompt = summary.history[-1][-1]["content"]
+    assert tail_marker in synthesize_prompt
+    assert middle_marker not in synthesize_prompt
