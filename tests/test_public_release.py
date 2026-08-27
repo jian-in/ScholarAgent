@@ -118,7 +118,7 @@ def test_readme_exposes_reproducible_evidence_and_project_boundaries() -> None:
     readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
 
     for required_text in (
-        "130+ 项离线测试",
+        "200+ 项离线测试",
         "尚未产出正式成本对比结论",
         "CONTRIBUTING.md",
         "SECURITY.md",

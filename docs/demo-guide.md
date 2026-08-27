@@ -6,7 +6,7 @@
 
 ## 演示前准备（前一天完成）
 
-- [ ] `.\.venv\Scripts\python.exe -m pytest -q` 全绿（当前 130+ 项）
+- [ ] `.\.venv\Scripts\python.exe -m pytest -q` 全绿（当前 200+ 项）
 - [ ] `.env` 中 API Key 可用，或本机 Ollama 已运行（`main.py` 会自动探测）
 - [ ] 打开三个窗口备用：本 README、本地工作台（`start.bat`）、
       [`docs/case-study.md`](case-study.md)
@@ -78,7 +78,7 @@ CLI 等价命令（备用）：
 
 ### 4:30–5:00 收尾（讲什么）
 
-- 复验入口：130+ 离线测试 + `pytest -q` 一条命令；规则路由 36 题一致性
+- 复验入口：200+ 离线测试 + `pytest -q` 一条命令；规则路由 36 题一致性
   零模型调用即可复验（README「成本感知自适应路由」节的命令）。
 - 治理与长期发展：CI、贡献指南、路线图（`docs/ROADMAP.md`）——
   比赛线与研究线分开，未完成实验不包装成结论。
