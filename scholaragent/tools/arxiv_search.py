@@ -9,6 +9,7 @@ arXiv 提供免费的公开 API(不用注册、不要 Key):
 访问 arXiv 慢的话设好代理环境变量即可,代码不用改。
 """
 
+import datetime
 import os
 import re
 import xml.etree.ElementTree as ET
@@ -23,6 +24,22 @@ OPENALEX_ARXIV_SOURCE_ID = "S4306400194"
 
 # Atom XML 里所有标签都带命名空间,查找时必须带上,否则什么都找不到
 _ATOM = {"atom": "http://www.w3.org/2005/Atom"}
+
+# 备用源 OpenAlex 不认识 arXiv 分类号,这里做近似关键词映射;
+# 没映射到的分类按小写原文并入查询,并在结果里如实标注来源
+CATEGORY_TERM_MAP = {
+    "cs.AI": "artificial intelligence",
+    "cs.CL": "natural language processing",
+    "cs.LG": "machine learning",
+    "stat.ML": "machine learning",
+    "cs.CV": "computer vision",
+    "cs.IR": "information retrieval",
+    "cs.HC": "human-computer interaction",
+    "cs.CR": "security cryptography",
+    "cs.MA": "multi-agent systems",
+}
+_CATEGORY_PATTERN = re.compile(r"[a-z-]+(?:\.[A-Z]{2})?")
+_SORT_API_NAMES = {"relevance": "relevance", "submitted_date": "submittedDate"}
 
 
 def _temporary_failure(error: str) -> str:
@@ -123,12 +140,64 @@ def _format_papers(papers: list, source: str = "arXiv") -> str:
     return "\n".join(lines)
 
 
+def _normalize_date(value: str) -> str:
+    """校验 YYYY-MM-DD 并返回紧凑形式 YYYYMMDD(arXiv 区间语法用)。"""
+    match = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", str(value).strip())
+    if not match:
+        raise ValueError(f"日期格式应为 YYYY-MM-DD,收到:{value!r}")
+    year, month, day = (int(part) for part in match.groups())
+    try:
+        datetime.date(year, month, day)
+    except ValueError as exc:
+        raise ValueError(f"日期不合法:{value!r}({exc})") from exc
+    return f"{year:04d}{month:02d}{day:02d}"
+
+
+def _clean_categories(categories) -> list:
+    """接受列表或逗号分隔字符串,去空、去重、限 4 个并校验分类号格式。"""
+    if categories is None:
+        return []
+    if isinstance(categories, str):
+        raw = categories.split(",")
+    else:
+        raw = list(categories)
+    cleaned = []
+    for item in raw:
+        category = str(item).strip()
+        if not category:
+            continue
+        if not _CATEGORY_PATTERN.fullmatch(category):
+            raise ValueError(
+                f"分类号格式不合法:{category!r}(应形如 cs.AI、stat.ML)")
+        if category not in cleaned:
+            cleaned.append(category)
+    return cleaned[:4]
+
+
+def _build_arxiv_search_query(query: str, categories=None,
+                              date_range: str = None) -> str:
+    """组装 arXiv 检索式;纯函数,便于离线测试。
+
+    形如:all:关键词 AND (cat:cs.AI OR cat:cs.CL) AND submittedDate:[... TO ...]
+    """
+    search = f"all:{query}"
+    if categories:
+        cats = " OR ".join(f"cat:{c}" for c in categories)
+        search += f" AND ({cats})"
+    if date_range:
+        search += f" AND {date_range}"
+    return search
+
+
 class ArxivSearchTool(Tool):
     name = "arxiv_search"
     description = (
         "搜索 arXiv 学术论文,返回标题、作者、arXiv 编号、日期和摘要。"
-        "支持用 OpenAlex 的 arXiv 索引避开官方接口限流。"
-        "查询请用英文关键词,例如 'LLM agent tool use'"
+        "用法建议:宽泛主题(如 'AI'、'agent')先用 categories 限定分类"
+        "(如 cs.AI、cs.CL)再搜,避免噪声;用户要最新论文时用 "
+        "sort_by='submitted_date';只看某日期之后的用 from_date='YYYY-MM-DD'。"
+        "查询请用英文关键词;一个主题角度一次查询,重要主题可分多次从不同"
+        "角度检索。官方接口繁忙时自动改用 OpenAlex 的 arXiv 索引。"
     )
     parameters = {
         "type": "object",
@@ -141,21 +210,55 @@ class ArxivSearchTool(Tool):
                 "type": "integer",
                 "description": "返回论文数量,默认 5,最多 10",
             },
+            "sort_by": {
+                "type": "string",
+                "enum": ["relevance", "submitted_date"],
+                "description": "排序方式:relevance=相关度(默认);"
+                               "submitted_date=最新提交优先",
+            },
+            "categories": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "arXiv 分类过滤,如 ['cs.AI'] 或 "
+                               "['cs.CL','cs.LG'],最多 4 个",
+            },
+            "from_date": {
+                "type": "string",
+                "description": "只返回该日期(YYYY-MM-DD)之后提交的论文",
+            },
         },
         "required": ["query"],
     }
 
-    def run(self, query: str, max_results: int = 5) -> str:
+    def run(self, query: str, max_results: int = 5,
+            sort_by: str = "relevance", categories=None,
+            from_date: str = None) -> str:
         max_results = max(1, min(int(max_results), 10))  # 防模型狮子大开口挤爆上下文
+        sort_by = str(sort_by or "relevance").strip().lower()
+        if sort_by not in _SORT_API_NAMES:
+            return (f"参数无效:sort_by 只支持 relevance 或 submitted_date,"
+                    f"收到:{sort_by!r}")
+        try:
+            cats = _clean_categories(categories)
+            from_compact = _normalize_date(from_date) if from_date else None
+        except ValueError as exc:
+            # 错误回传而非崩溃:参数问题让模型自己修正后重试
+            return f"参数无效:{exc}"
+        date_range = None
+        if from_compact:
+            tomorrow = datetime.date.today() + datetime.timedelta(days=1)
+            date_range = (f"submittedDate:[{from_compact}0000 TO "
+                          f"{tomorrow:%Y%m%d}2359]")
         if os.getenv("ARXIV_SEARCH_BACKEND", "auto").strip().lower() == "openalex":
             return self._fallback_result(
                 query, max_results, "已按配置使用 OpenAlex",
-                source="OpenAlex 的 arXiv 索引（直接检索）")
+                source="OpenAlex 的 arXiv 索引（直接检索）",
+                sort_by=sort_by, categories=cats, from_date=from_date)
         params = {
-            "search_query": f"all:{query}",
+            "search_query": _build_arxiv_search_query(query, cats, date_range),
             "start": 0,
             "max_results": max_results,
-            "sortBy": "relevance",
+            "sortBy": _SORT_API_NAMES[sort_by],
         }
         headers = {
             "Accept": "application/atom+xml",
@@ -175,21 +278,29 @@ class ArxivSearchTool(Tool):
             )
             if response.status_code in {429, 500, 502, 503, 504}:
                 return self._fallback_result(
-                    query, max_results, f"HTTP {response.status_code}")
+                    query, max_results, f"HTTP {response.status_code}",
+                    sort_by=sort_by, categories=cats, from_date=from_date)
             response.raise_for_status()
         except httpx.RequestError as exc:
             return self._fallback_result(
                 query, max_results,
-                f"{type(exc).__name__}: {exc}")
+                f"{type(exc).__name__}: {exc}",
+                sort_by=sort_by, categories=cats, from_date=from_date)
 
         papers = _parse_atom(response.text)
         if not papers:
             return f"没有找到与「{query}」相关的论文,请换个英文关键词试试"
         return _format_papers(papers[:max_results])
 
-    def run_result(self, query: str, max_results: int = 5) -> ToolResult:
-        """把旧文字出口转换为结构化临时失败，不把控制前缀交给模型。"""
-        legacy = self.run(query, max_results)
+    def run_result(self, query: str, max_results: int = 5,
+                   **kwargs) -> ToolResult:
+        """把旧文字出口转换为结构化临时失败，不把控制前缀交给模型。
+
+        新增检索参数(sort_by/categories/from_date)经 **kwargs 原样转发:
+        ToolRegistry 会把模型给出的全部参数透传进来,签名写死会导致
+        增强参数触发 TypeError。
+        """
+        legacy = self.run(query, max_results, **kwargs)
         if legacy.startswith(STOP_RETRY_PREFIX):
             return ToolResult(
                 text=legacy[len(STOP_RETRY_PREFIX):].lstrip(),
@@ -201,10 +312,14 @@ class ArxivSearchTool(Tool):
 
     def _fallback_result(self, query: str, max_results: int,
                          arxiv_error: str,
-                         source: str = "OpenAlex 的 arXiv 索引（自动备用）") -> str:
+                         source: str = "OpenAlex 的 arXiv 索引（自动备用）",
+                         sort_by: str = "relevance", categories=None,
+                         from_date: str = None) -> str:
         """arXiv 持续限流时改查 OpenAlex 的 arXiv 索引。"""
         try:
-            papers = self._search_openalex(query, max_results)
+            papers = self._search_openalex(
+                query, max_results, sort_by=sort_by,
+                categories=categories, from_date=from_date)
         except (httpx.HTTPError, ValueError) as exc:
             return _temporary_failure(
                 f"arXiv: {arxiv_error}; OpenAlex: {type(exc).__name__}: {exc}")
@@ -213,7 +328,9 @@ class ArxivSearchTool(Tool):
                     f"（arXiv 接口状态:{arxiv_error}）")
         return _format_papers(papers[:max_results], source=source)
 
-    def _search_openalex(self, query: str, max_results: int) -> list:
+    def _search_openalex(self, query: str, max_results: int,
+                         sort_by: str = "relevance", categories=None,
+                         from_date: str = None) -> list:
         headers = {
             "Accept": "application/json",
             "User-Agent": os.getenv(
@@ -225,15 +342,27 @@ class ArxivSearchTool(Tool):
         # 限定在标题与摘要后，文献检索相关度明显更稳定。过滤器用逗号/冒号
         # 分隔语法，先清掉这些控制符，避免模型生成的标点破坏参数结构。
         safe_query = " ".join(re.findall(r"[A-Za-z0-9.+_/-]+", query)) or query
+        if categories:
+            # OpenAlex 不认识 arXiv 分类号,用映射表并入近似关键词;
+            # 未映射的分类按小写原文并入,无害且不静默丢弃语义
+            terms = " ".join(
+                CATEGORY_TERM_MAP.get(c, c.replace(".", " ").lower())
+                for c in categories)
+            safe_query = f"{safe_query} {terms}"
+        arxiv_filter = (
+            f"primary_location.source.id:{OPENALEX_ARXIV_SOURCE_ID},"
+            f"title_and_abstract.search:{safe_query}"
+        )
+        if from_date:
+            arxiv_filter += f",from_publication_date:{from_date}"
         params = {
-            "filter": (
-                f"primary_location.source.id:{OPENALEX_ARXIV_SOURCE_ID},"
-                f"title_and_abstract.search:{safe_query}"
-            ),
+            "filter": arxiv_filter,
             "per-page": max_results,
             "select": ("title,publication_date,authorships,"
                        "abstract_inverted_index,primary_location,doi"),
         }
+        if sort_by == "submitted_date":
+            params["sort"] = "publication_date:desc"
         email = os.getenv("OPENALEX_EMAIL", "").strip()
         if email:
             params["mailto"] = email

@@ -159,7 +159,7 @@ def assemble_runners(agent: Agent, on_progress=None, should_stop=None,
         agent.tools,
         system_prompt=RESEARCH_SYSTEM_PROMPT,
         max_steps=15,
-        tool_call_limits={"arxiv_search": 3},
+        tool_call_limits={"arxiv_search": 4},
         metrics_mode="plan",
         on_progress=on_progress,
         should_stop=should_stop,
@@ -341,7 +341,7 @@ class ExecutionRuntime:
             conversation=conversation if conversation is not False else None,
             long_memory=self.memory,
             auto_recall=auto_recall,
-            tool_call_limits={"arxiv_search": 3},
+            tool_call_limits={"arxiv_search": 4},
             summary_llm=self.summary_llm,
         )
         self.runners = assemble_runners(

@@ -89,12 +89,27 @@ class LLMClient:
                 "arguments": arguments,
                 "error": error,
             })
+        # 缓存明细:DeepSeek 直接给 hit/miss;OpenAI 兼容实现只给
+        # prompt_tokens_details.cached_tokens,miss 由 prompt-hit 推导。
+        # 语义一致:两家 prompt_tokens 都包含命中部分
+        cache_hit = getattr(usage, "prompt_cache_hit_tokens", None)
+        cache_miss = getattr(usage, "prompt_cache_miss_tokens", None)
+        if cache_hit is None:
+            cache_hit = getattr(
+                getattr(usage, "prompt_tokens_details", None),
+                "cached_tokens", None)
+        if cache_hit is not None and cache_miss is None:
+            prompt_total = getattr(usage, "prompt_tokens", None)
+            if isinstance(prompt_total, int) and isinstance(cache_hit, int):
+                cache_miss = max(0, prompt_total - cache_hit)
         return {
             "content": message.content,
             "tool_calls": tool_calls,
             "usage": {
                 "prompt_tokens": getattr(usage, "prompt_tokens", None),
                 "completion_tokens": getattr(usage, "completion_tokens", None),
+                "prompt_cache_hit_tokens": cache_hit,
+                "prompt_cache_miss_tokens": cache_miss,
             } if usage is not None else None,
         }
 

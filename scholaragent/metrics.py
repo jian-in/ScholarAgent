@@ -17,7 +17,10 @@ class RunMetrics:
     llm_calls: int
     prompt_tokens: Optional[int]
     completion_tokens: Optional[int]
-    tool_calls: int
+    # 前缀缓存明细(DeepSeek 兼容接口);None 表示上游未返回,绝不估算
+    cache_hit_tokens: Optional[int] = None
+    cache_miss_tokens: Optional[int] = None
+    tool_calls: int = 0
     # 按模型职责保留一份 token 分解，便于核验云端调研与本地总结的成本边界。
     llm_usage_by_role: Mapping[str, Mapping] = field(default_factory=dict)
 
@@ -40,6 +43,9 @@ class MetricsCollector:
         self._completion_tokens = 0
         self._missing_prompt_tokens = False
         self._missing_completion_tokens = False
+        self._cache_hit_tokens = 0
+        self._cache_miss_tokens = 0
+        self._missing_cache = False
         self._tool_calls = 0
         self._llm_usage_by_role = {}
 
@@ -59,6 +65,9 @@ class MetricsCollector:
             "completion_tokens": 0,
             "missing_prompt_tokens": False,
             "missing_completion_tokens": False,
+            "cache_hit_tokens": 0,
+            "cache_miss_tokens": 0,
+            "missing_cache": False,
         })
         bucket["llm_calls"] += 1
         if bucket.get("provider") is None and provider is not None:
@@ -68,8 +77,10 @@ class MetricsCollector:
         if not usage:
             self._missing_prompt_tokens = True
             self._missing_completion_tokens = True
+            self._missing_cache = True
             bucket["missing_prompt_tokens"] = True
             bucket["missing_completion_tokens"] = True
+            bucket["missing_cache"] = True
             return
 
         prompt_tokens = usage.get("prompt_tokens")
@@ -86,6 +97,18 @@ class MetricsCollector:
         else:
             self._missing_completion_tokens = True
             bucket["missing_completion_tokens"] = True
+
+        hit = usage.get("prompt_cache_hit_tokens")
+        miss = usage.get("prompt_cache_miss_tokens")
+        if isinstance(hit, int) and hit >= 0 and isinstance(miss, int) and miss >= 0:
+            self._cache_hit_tokens += hit
+            self._cache_miss_tokens += miss
+            bucket["cache_hit_tokens"] += hit
+            bucket["cache_miss_tokens"] += miss
+        else:
+            # 上游不区分缓存(如部分 OpenAI 兼容实现)时如实标记,不估算
+            self._missing_cache = True
+            bucket["missing_cache"] = True
 
     def record_tool_call(self) -> None:
         self._tool_calls += 1
@@ -116,6 +139,14 @@ class MetricsCollector:
                     None if bucket["missing_completion_tokens"]
                     else bucket["completion_tokens"]
                 ),
+                "cache_hit_tokens": (
+                    None if bucket["missing_cache"]
+                    else bucket["cache_hit_tokens"]
+                ),
+                "cache_miss_tokens": (
+                    None if bucket["missing_cache"]
+                    else bucket["cache_miss_tokens"]
+                ),
             }
             for role, bucket in self._llm_usage_by_role.items()
         }
@@ -126,6 +157,12 @@ class MetricsCollector:
             prompt_tokens=None if self._missing_prompt_tokens else self._prompt_tokens,
             completion_tokens=(
                 None if self._missing_completion_tokens else self._completion_tokens
+            ),
+            cache_hit_tokens=(
+                None if self._missing_cache else self._cache_hit_tokens
+            ),
+            cache_miss_tokens=(
+                None if self._missing_cache else self._cache_miss_tokens
             ),
             tool_calls=self._tool_calls if tool_calls is None else tool_calls,
             llm_usage_by_role=usage_by_role,

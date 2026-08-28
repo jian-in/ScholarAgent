@@ -1,5 +1,7 @@
-"""上下文压缩的离线测试:验证旧工具结果被压缩、最近结果保持原文、
-消息配对不被破坏,并实测压缩前后的发送字符量。
+"""上下文定稿式裁剪的离线测试。
+
+核心契约:工具结果在创建时即裁剪定稿,请求历史只追加、永不改写 ——
+这是模型前缀缓存(命中部分约 1/4 价格)全程有效的条件。
 
 运行方式(项目根目录下):
     python -m pytest tests/test_context_compression.py -q
@@ -35,16 +37,18 @@ class ChunkTool(Tool):
 
 
 class RecordingLLM(ScriptedLLM):
-    """记录每次 chat 收到的完整历史快照,供逐次断言。"""
+    """记录每次 chat 收到的完整历史快照与工具清单,供逐次断言。"""
 
     def __init__(self, replies):
         super().__init__(replies)
         self.calls = []
+        self.tools_seen = []
 
     def chat(self, messages, tools=None):
-        # 浅拷贝即可:content 是字符串,后续压缩替换的是新字符串,
+        # 浅拷贝即可:content 是字符串,后续替换的是新字符串,
         # 不会污染这里存下的快照
         self.calls.append([dict(m) for m in messages])
+        self.tools_seen.append([dict(t) for t in (tools or [])])
         return super().chat(messages, tools=tools)
 
 
@@ -61,22 +65,30 @@ def make_run(n_tool_steps, chunk_chars=6000):
     return llm, tool
 
 
-def test_old_observations_compressed_recent_kept():
-    """6 次工具调用后:最早 4 条被压缩(带标记),最近 2 条保持原文。"""
+def test_observation_finalized_at_creation():
+    """大结果在创建当步就已定稿,不存在"先发全文、事后改写"。"""
+    llm, _ = make_run(4)
+    for step_index, snapshot in enumerate(llm.calls):
+        # 第 k 次请求时,历史里只有 k-1 条工具结果
+        tool_msgs = [m for m in snapshot if m.get("role") == "tool"]
+        for msg in tool_msgs:
+            assert COMPRESSED_MARK in msg["content"], (
+                f"第 {step_index + 1} 次请求时发现未定稿的工具结果")
+
+
+def test_history_is_append_only():
+    """缓存契约:任意一次请求的消息序列是下一次请求的严格前缀。
+
+    任何事后改写(压缩/重排)都会破坏该性质并打失效前缀缓存。
+    """
     llm, _ = make_run(6)
-    last = llm.calls[-1]
-    tool_msgs = [m for m in last if m.get("role") == "tool"]
-    assert len(tool_msgs) == 6
-    for msg in tool_msgs[:4]:
-        assert COMPRESSED_MARK in msg["content"]
-        assert len(msg["content"]) < 1000  # 6000 字符压到远小于原文
-    for msg in tool_msgs[4:]:
-        assert COMPRESSED_MARK not in msg["content"]
-        assert len(msg["content"]) > 5000  # 最近两条原样
+    for prev, curr in zip(llm.calls, llm.calls[1:]):
+        assert curr[:len(prev)] == prev, (
+            "检测到历史消息被改写:请求前缀不稳定,前缀缓存将失效")
 
 
 def test_message_structure_and_pairing_preserved():
-    """压缩只改内容:消息顺序、角色序列和 tool_call_id 配对必须完整。"""
+    """裁剪只改内容:消息顺序、角色序列和 tool_call_id 配对必须完整。"""
     llm, _ = make_run(4)
     last = llm.calls[-1]
     roles = [m.get("role") for m in last]
@@ -84,7 +96,6 @@ def test_message_structure_and_pairing_preserved():
     assert roles[1] == "user"
     assert roles.count("assistant") == 4  # 4 次工具调用的思考
     assert roles.count("tool") == 4
-    # 每条 tool 消息的 id 都能在某条 assistant 消息的 tool_calls 里找到
     assistant_ids = {
         tc["id"] for m in last if m.get("role") == "assistant"
         for tc in m.get("tool_calls", [])
@@ -94,57 +105,49 @@ def test_message_structure_and_pairing_preserved():
             assert msg["tool_call_id"] in assistant_ids
 
 
-def test_compression_is_idempotent():
-    """已压缩的消息再次进入压缩不会二次截断。"""
-    llm, tool = make_run(4)
-    last = llm.calls[-1]
-    compressed = [m for m in last if m.get("role") == "tool"
-                  and COMPRESSED_MARK in m["content"]]
-    assert compressed
-    lengths_before = [len(m["content"]) for m in compressed]
-    Agent(ScriptedLLM([]), ToolRegistry([tool]),
-          verbose=False)._compress_history(last)
-    lengths_after = [len(m["content"]) for m in compressed]
-    assert lengths_after == lengths_before
+def test_finalize_is_idempotent():
+    """已定稿的内容再次进入裁剪不会二次截断。"""
+    _, tool = make_run(2)
+    agent = Agent(ScriptedLLM([]), ToolRegistry([tool]), verbose=False)
+    sample = "y" * 9000
+    once = agent._finalize_observation(sample)
+    twice = agent._finalize_observation(once)
+    assert once == twice
 
 
-def test_compression_disabled_when_config_zero(monkeypatch):
-    """AGENT_CONTEXT_OLD_OBSERVATION_CHARS=0 时完全不压缩。"""
-    monkeypatch.setattr(config, "AGENT_CONTEXT_OLD_OBSERVATION_CHARS", 0)
-    llm, _ = make_run(4)
-    last = llm.calls[-1]
-    tool_msgs = [m for m in last if m.get("role") == "tool"]
-    assert len(tool_msgs) == 4
-    for msg in tool_msgs:
-        assert COMPRESSED_MARK not in msg["content"]
-        assert len(msg["content"]) > 5000
+def test_prune_disabled_when_threshold_zero(monkeypatch):
+    """AGENT_CONTEXT_PRUNE_THRESHOLD=0 时完全裁剪关闭,历史发原文。"""
+    monkeypatch.setattr(config, "AGENT_CONTEXT_PRUNE_THRESHOLD", 0)
+    llm, _ = make_run(3)
+    for snapshot in llm.calls:
+        for msg in snapshot:
+            if msg.get("role") == "tool":
+                assert COMPRESSED_MARK not in msg["content"]
+                assert len(msg["content"]) > 5000
 
 
-def test_measured_char_saving():
-    """同一段剧本,压缩开启 vs 关闭,统计模型实际收到的总字符量。"""
-    llm_compressed, _ = make_run(9)
-    total_compressed = sum(
+def test_measured_char_saving_with_tight_budget(monkeypatch):
+    """收紧预算后,同一剧本模型收到的总字符量应大幅下降。"""
+    monkeypatch.setattr(config, "AGENT_CONTEXT_PRUNE_THRESHOLD", 1000)
+    monkeypatch.setattr(config, "AGENT_CONTEXT_PRUNE_HEAD", 600)
+    monkeypatch.setattr(config, "AGENT_CONTEXT_PRUNE_TAIL", 300)
+    llm_pruned, _ = make_run(6)
+    total_pruned = sum(
         len(str(m.get("content") or ""))
-        for call in llm_compressed.calls for m in call)
+        for call in llm_pruned.calls for m in call)
 
-    original = config.AGENT_CONTEXT_OLD_OBSERVATION_CHARS
-    config.AGENT_CONTEXT_OLD_OBSERVATION_CHARS = 0
-    try:
-        llm_plain, _ = make_run(9)
-    finally:
-        config.AGENT_CONTEXT_OLD_OBSERVATION_CHARS = original
+    monkeypatch.setattr(config, "AGENT_CONTEXT_PRUNE_THRESHOLD", 0)
+    llm_plain, _ = make_run(6)
     total_plain = sum(
         len(str(m.get("content") or ""))
         for call in llm_plain.calls for m in call)
 
-    assert total_compressed < total_plain * 0.5, (
-        f"压缩后 {total_compressed} 字符,未压缩 {total_plain} 字符,"
-        "节省应超过一半"
-    )
+    assert total_pruned < total_plain * 0.5, (
+        f"裁剪后 {total_pruned} 字符,未裁剪 {total_plain} 字符")
 
 
-def test_conversation_memory_receives_compressed_history():
-    """写回会话记忆的也是压缩后历史,跨轮预算同步受益。"""
+def test_conversation_memory_receives_finalized_history():
+    """写回会话记忆的也是定稿后历史,跨轮预算同步受益。"""
     replies = [
         {"content": None, "tool_calls": [
             {"id": f"call_{i}", "name": "read_chunk", "arguments": {}}]}
@@ -156,5 +159,39 @@ def test_conversation_memory_receives_compressed_history():
           conversation=memory).run("读完全部段落")
     tool_msgs = [m for m in memory.messages if m.get("role") == "tool"]
     assert len(tool_msgs) == 3
-    assert COMPRESSED_MARK in tool_msgs[0]["content"]  # 最早一条已压缩
-    assert COMPRESSED_MARK not in tool_msgs[2]["content"]  # 最近一条原文
+    for msg in tool_msgs:
+        assert COMPRESSED_MARK in msg["content"]
+
+
+def test_tool_schema_list_stays_stable_across_steps():
+    """停用工具不再从请求的 tools 参数中移除,保持缓存前缀稳定。
+
+    模型调用停用工具时会收到文字回传,约束照常生效。
+    """
+    from scholaragent.tool import STOP_RETRY_PREFIX
+    from scholaragent.tools.calculator import CalculatorTool
+
+    class TemporaryFailureTool(Tool):
+        name = "temporary"
+
+        def run(self) -> str:
+            return f"{STOP_RETRY_PREFIX} 服务繁忙"
+
+    replies = [
+        {"content": None, "tool_calls": [
+            {"id": "call_1", "name": "temporary", "arguments": {}}]},
+        # 第二次调用时 temporary 已被停用,模型仍点名它
+        {"content": None, "tool_calls": [
+            {"id": "call_2", "name": "temporary", "arguments": {}}]},
+        {"content": "好", "tool_calls": []},
+    ]
+    llm = RecordingLLM(replies)
+    agent = Agent(llm, ToolRegistry([TemporaryFailureTool(), CalculatorTool()]),
+                  verbose=False, tool_call_limits={"temporary": 1})
+    answer = agent.run("测试")
+
+    assert answer == "好"
+    assert len(llm.tools_seen) == 3
+    first = llm.tools_seen[0]
+    for tools in llm.tools_seen[1:]:
+        assert tools == first, "tools 参数在步间变化会打失效前缀缓存"

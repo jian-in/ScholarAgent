@@ -20,10 +20,13 @@
 
 ### 新增
 
-- 上下文成本控制:Agent 循环发送前自动压缩较早的工具结果(最近 2 条保持
-  原文,更早的压到约 600 字符,保头保尾),三种执行模式同时受益;可经
-  `AGENT_CONTEXT_*` 环境变量调整或关闭。离线实测 9 步读论文任务的总发送
-  字符量降至 50% 以下(见 `tests/test_context_compression.py`)。
+- arxiv_search 检索增强:新增 sort_by(相关度/最新提交优先)、categories(arXiv 分类过滤,最多 4 个)、from_date(日期下限)三个参数;宽泛主题可先限定分类再检索,检索员提示词与调用限额同步放宽以支持多角度系统检索。
+- 上下文成本控制(定稿式):超过阈值的工具结果在创建时立即裁剪定稿
+  (保头 3600 + 保尾 1200,默认阈值 4800,可经 `AGENT_CONTEXT_PRUNE_*`
+  调整或关闭),请求历史只追加、前缀逐字节稳定,使 DeepSeek 前缀缓存
+  全程有效;工具清单跨步固定,停用工具改为文字回传约束。运行指标新增
+  缓存命中/未命中 token 记录(兼容 DeepSeek 与 OpenAI 两种明细字段),
+  工作台指标面板显示命中率。
 - 开源治理配套：Issue / PR 模板、GitHub Actions CI（双系统离线测试）、
   行为准则（CODE_OF_CONDUCT）、维护说明（MAINTAINERS）、路线图（docs/ROADMAP.md）。
 - 五分钟演示指南（docs/demo-guide.md）与参赛材料文字稿（docs/contest/）。

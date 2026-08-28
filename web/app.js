@@ -500,7 +500,15 @@ function formatTokenUsage(metrics) {
     return "Token 未返回";
   }
   const totalTokens = promptTokens + completionTokens;
-  return `Token ${totalTokens.toLocaleString()}（输入 ${promptTokens.toLocaleString()} · 输出 ${completionTokens.toLocaleString()}）`;
+  let cacheText = "";
+  if (metrics.cache_hit_tokens != null && metrics.cache_miss_tokens != null) {
+    const hit = Number(metrics.cache_hit_tokens);
+    const totalPrompt = hit + Number(metrics.cache_miss_tokens);
+    if (Number.isFinite(hit) && totalPrompt > 0) {
+      cacheText = ` · 缓存命中 ${(Number.isInteger(hit / totalPrompt * 100) ? hit / totalPrompt * 100 : (hit / totalPrompt * 100).toFixed(1))}%（${hit.toLocaleString()}）`;
+    }
+  }
+  return `Token ${totalTokens.toLocaleString()}（输入 ${promptTokens.toLocaleString()} · 输出 ${completionTokens.toLocaleString()}）${cacheText}`;
 }
 
 function formatRoleTokenUsage(metrics) {

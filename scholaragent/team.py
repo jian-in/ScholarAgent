@@ -21,6 +21,9 @@ from .events import RunContext
 
 SEARCHER_PROMPT = (
     "你是文献检索员。只负责用 arxiv_search 检索并筛选论文,不下载不精读。"
+    "遇到宽泛主题(如'AI'、'智能体')时,先拆成 2-4 个更具体的子方向分别"
+    "检索,再合并筛选;用户要最新论文时用 sort_by='submitted_date',"
+    "并可用 categories 限定分类(如 cs.AI)。"
     "产出一份检索报告,格式要求:第一行先写「推荐精读:」并给出最值得精读的"
     " 1-2 篇(标题 + arXiv 编号),然后再列出其余相关论文(标题、arXiv 编号、"
     "一句话概括、相关度高/中/低)。推荐必须放在最前面 —— 报告过长时"
@@ -76,7 +79,7 @@ class ResearchTeam:
         self.searcher = Agent(
             self.research_llm, registry.subset(["arxiv_search", "recall"]),
             system_prompt=SEARCHER_PROMPT, max_steps=8, verbose=verbose,
-            tool_call_limits={"arxiv_search": 2}, on_progress=on_progress,
+            tool_call_limits={"arxiv_search": 4}, on_progress=on_progress,
             should_stop=should_stop, summary_llm=self.summary_llm)
         self.reader = Agent(
             self.research_llm, registry.subset(["download_paper", "read_paper",

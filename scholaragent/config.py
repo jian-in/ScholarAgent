@@ -74,14 +74,13 @@ OCR_DPI = _positive_int("SCHOLARAGENT_OCR_DPI", 200)
 OCR_TIMEOUT = _positive_int("SCHOLARAGENT_OCR_TIMEOUT", 120)
 OCR_PSM = _nonnegative_int("SCHOLARAGENT_OCR_PSM", 3)
 
-# 上下文压缩:Agent 循环每一步都会把完整历史重发给模型,旧工具结果
-# (尤其 read_paper 的论文原文)反复重发是 prompt token 的最大浪费。
-# 最近 RECENT 条工具结果保留原文,更早的压到 OLD_CHARS 字符(保头保尾);
-# OLD_CHARS 设为 0 可完全关闭压缩。
-AGENT_CONTEXT_RECENT_OBSERVATIONS = _positive_int(
-    "AGENT_CONTEXT_RECENT_OBSERVATIONS", 2)
-AGENT_CONTEXT_OLD_OBSERVATION_CHARS = _nonnegative_int(
-    "AGENT_CONTEXT_OLD_OBSERVATION_CHARS", 600)
+# 上下文成本控制(定稿式裁剪):超过阈值的工具结果在创建时立即裁剪定稿,
+# 之后永不改写 —— 历史只追加,消息前缀逐字节稳定,让 DeepSeek 的前缀缓存
+# (命中部分约 1/4 价格)在任务全程有效。THRESHOLD 设为 0 关闭。
+AGENT_CONTEXT_PRUNE_THRESHOLD = _nonnegative_int(
+    "AGENT_CONTEXT_PRUNE_THRESHOLD", 4800)
+AGENT_CONTEXT_PRUNE_HEAD = _positive_int("AGENT_CONTEXT_PRUNE_HEAD", 3600)
+AGENT_CONTEXT_PRUNE_TAIL = _positive_int("AGENT_CONTEXT_PRUNE_TAIL", 1200)
 
 # Plan 模式写最终汇总时,每个步骤结果提供的最大字符数(保头保尾)。
 # 太小会导致汇总"看不到"步骤里真正的结论,输出显得残缺。

@@ -23,8 +23,8 @@ DEFAULT_SYSTEM_PROMPT = (
 # 协作式取消:在下一步边界抛出,让工作台能干净收尾
 CANCELLED_ANSWER = "(任务已取消)"
 
-# 旧工具结果被压缩后打上的标记(判断"已压缩过"就靠它,保证幂等)
-COMPRESSED_MARK = "较早的工具结果已压缩"
+# 工具结果定稿裁剪的标记(判断"已定稿"就靠它,保证幂等)
+COMPRESSED_MARK = "已按上下文预算裁剪"
 
 # 云端调研模型完成工具调用后，交给本地模型的固定交接指令。
 # 这条边界放在 Agent 循环里，而不是只写在系统提示词里，才能确保
@@ -120,13 +120,14 @@ class Agent:
                 answer = CANCELLED_ANSWER
                 break
             # ① 思考:把完整对话历史 + 工具清单交给模型。
-            # 发送前先压缩较早的工具结果:它们每一步都被整段重发,
-            # 是 prompt token 的最大浪费(尤其 read_paper 的论文原文)
-            self._compress_history(messages)
+            # 历史中每条消息在创建时即已裁剪定稿(见 _finalize_observation),
+            # 此处不再改写 —— 请求前缀逐字节稳定,模型前缀缓存全程有效。
+            # 工具清单保持固定:把停用工具从请求中移除会改变 tools 参数,
+            # 同样会打失效缓存;停用约束由调用时的文字回传继续执行。
             reply = context.chat(
                 self.llm,
                 messages,
-                tools=self.tools.schemas(exclude=disabled_tools),
+                tools=self.tools.schemas(),
                 step=step,
             )
             messages.append(assistant_message(reply))
@@ -270,9 +271,11 @@ class Agent:
                 self._log(f"[第 {step} 步] 工具返回:{result}")
                 messages.append({
                     "role": "tool",
-                    # tool_call_id 让模型知道这段结果对应它的哪一次调用
+                    # tool_call_id 让模型知道这段结果对应它的哪一次调用。
+                    # 内容在此刻定稿(超阈值即裁剪),之后永不改写,
+                    # 保证请求历史只追加、前缀缓存全程有效
                     "tool_call_id": tc["id"],
-                    "content": result,
+                    "content": self._finalize_observation(result),
                 })
             if answer == CANCELLED_ANSWER:
                 break
@@ -291,39 +294,30 @@ class Agent:
         self._context_external = False
         return answer
 
-    def _compress_history(self, messages: list):
-        """把较早的工具结果原地压缩成"保头 + 保尾"的短摘要。
+    def _finalize_observation(self, content):
+        """工具结果创建时立即裁剪定稿:超阈值就保头保尾,之后永不改写。
 
-        每一步循环都会把整个历史重发给模型,一条 6000 字符的论文片段
-        读完后还要在后续每一步重复计费。最近几条保持原文(模型正要
-        用它继续阅读/引用),更早的压到预算内 —— 消息只改内容、
-        不删不重排,tool_call_id 配对保持完整,API 不会报错。
-        压缩原地生效,因此写回会话记忆的也是压缩后历史。
+        历史不可变(append-only)是模型前缀缓存命中的前提 —— 任何事后
+        改写(如按步压缩旧消息)都会从改写点起打失效缓存。定稿式裁剪
+        让每条消息第一次发送时就是最终形态,前缀逐字节稳定。
+        read_paper 结尾的续读游标在尾部,保尾设计保证翻页不受影响。
         """
-        limit = config.AGENT_CONTEXT_OLD_OBSERVATION_CHARS
-        if limit <= 0:
-            return  # 显式关闭
-        keep_recent = config.AGENT_CONTEXT_RECENT_OBSERVATIONS
-        tool_indices = [
-            i for i, m in enumerate(messages) if m.get("role") == "tool"]
-        if keep_recent > 0:
-            tool_indices = tool_indices[:-keep_recent]
-        compressed, saved_chars = 0, 0
-        for i in tool_indices:
-            content = messages[i].get("content")
-            if (not isinstance(content, str) or len(content) <= limit
-                    or COMPRESSED_MARK in content):
-                continue  # 短消息、已压缩过的,都不动
-            head, tail = int(limit * 0.6), int(limit * 0.3)
-            messages[i]["content"] = (
-                f"{content[:head]}\n…({COMPRESSED_MARK},"
-                "完整原文可在需要时重新调用工具获取,"
-                f"关键结论应已存入笔记)…\n{content[-tail:]}")
-            compressed += 1
-            saved_chars += len(content) - len(messages[i]["content"])
-        if compressed:
-            self._log(f"[上下文] 已压缩 {compressed} 条较早的工具结果"
-                      f"(约省 {saved_chars} 字符)")
+        if not isinstance(content, str):
+            return content
+        threshold = config.AGENT_CONTEXT_PRUNE_THRESHOLD
+        if threshold <= 0 or len(content) <= threshold:
+            return content
+        if COMPRESSED_MARK in content:
+            return content  # 已定稿(如会话记忆回放),幂等
+        head = config.AGENT_CONTEXT_PRUNE_HEAD
+        tail = config.AGENT_CONTEXT_PRUNE_TAIL
+        finalized = (
+            f"{content[:head]}\n…({COMPRESSED_MARK},"
+            "完整原文可重新调用工具获取,关键结论应已存入笔记)…\n"
+            f"{content[-tail:]}")
+        self._log(f"[上下文] 工具结果已定稿裁剪"
+                  f"(约省 {len(content) - len(finalized)} 字符)")
+        return finalized
 
     def _stop_requested(self) -> bool:
         if self._active_context is not None:
