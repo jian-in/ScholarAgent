@@ -5,10 +5,22 @@
 """
 
 import json
+import random
+import time
 
-from openai import OpenAI
+from openai import (
+    APIConnectionError,
+    APITimeoutError,
+    OpenAI,
+    RateLimitError,
+)
 
 from . import config
+
+# 单次 API 请求的超时(秒):防止某个请求 hang 住,把整个 Agent 循环拖死。
+DEFAULT_REQUEST_TIMEOUT = 60.0
+# 网络抖动/空响应的最大尝试次数:指数退避,失败后自动重试。
+DEFAULT_MAX_ATTEMPTS = 3
 
 
 def _infer_provider(base_url):
@@ -21,16 +33,28 @@ def _infer_provider(base_url):
     return "cloud" if normalized else "unknown"
 
 
+def _is_retryable(exc: Exception) -> bool:
+    """只有瞬时故障值得重试:401 鉴权失败、400 参数错误,重试多少次都没用。"""
+    if isinstance(exc, (APIConnectionError, APITimeoutError, RateLimitError)):
+        return True
+    status = getattr(exc, "status_code", None)
+    return isinstance(status, int) and status >= 500
+
+
 class LLMClient:
     """真实的大模型客户端,走 OpenAI 兼容协议(国内主流厂商都支持)。"""
 
     def __init__(self, base_url=None, api_key=None, model=None,
-                 provider=None, role="general"):
+                 provider=None, role="general",
+                 timeout=None, max_attempts=None):
         self.model = model or config.LLM_MODEL
         self.provider = provider or _infer_provider(base_url or config.LLM_BASE_URL)
         self.role = role or "general"
         self._base_url = base_url or config.LLM_BASE_URL
         self._api_key = api_key or config.LLM_API_KEY
+        self._timeout = DEFAULT_REQUEST_TIMEOUT if timeout is None else timeout
+        self._max_attempts = (DEFAULT_MAX_ATTEMPTS
+                              if max_attempts is None else max(1, int(max_attempts)))
         # 延迟创建 SDK 客户端：Windows 首次构造 httpx/SSL 代理上下文可能
         # 很慢，不能让工作台的“提交任务”或后台线程在真正运行前卡住。
         self._client = None
@@ -40,6 +64,10 @@ class LLMClient:
             self._client = OpenAI(
                 base_url=self._base_url,
                 api_key=self._api_key,
+                # 重试策略由本文件的 _request_with_guard 统一拥有,
+                # SDK 内置重试关掉,避免两层退避叠加、难以归因。
+                max_retries=0,
+                timeout=self._timeout,
             )
         return self._client
 
@@ -50,6 +78,19 @@ class LLMClient:
             "provider": self.provider,
             "model": self.model,
         }
+
+    @staticmethod
+    def _sleep_backoff(attempt):
+        # 指数退避 + 抖动:第 n 次重试前睡 2**n 秒(封顶 8 秒),避免惊群。
+        time.sleep(min(2 ** attempt, 8) + random.uniform(0, 0.5))
+
+    def _create_completion(self, messages, tools):
+        """只发送一次请求;所有重试共用 _request_with_guard 的预算。"""
+        return self._client_instance().chat.completions.create(
+            model=self.model,
+            messages=messages,
+            tools=tools if tools else None,
+        )
 
     def chat(self, messages, tools=None):
         """发送整段对话历史,拿回模型的一条回复。
@@ -63,11 +104,7 @@ class LLMClient:
              "tool_calls": [{"id": ..., "name": ..., "arguments": 参数字典,
                              "error": None 或参数解析失败时的提示文字}]}
         """
-        response = self._client_instance().chat.completions.create(
-            model=self.model,
-            messages=messages,
-            tools=tools if tools else None,  # 空列表有些厂商会报错,统一转成 None
-        )
+        response = self._request_with_guard(messages, tools)
         message = response.choices[0].message
         usage = getattr(response, "usage", None)
 
@@ -112,6 +149,21 @@ class LLMClient:
                 "prompt_cache_miss_tokens": cache_miss,
             } if usage is not None else None,
         }
+
+    def _request_with_guard(self, messages, tools):
+        """网络错误和空 choices 共用一个尝试上限,避免嵌套重试。"""
+        for attempt in range(1, self._max_attempts + 1):
+            try:
+                response = self._create_completion(messages, tools)
+            except Exception as exc:
+                if not _is_retryable(exc) or attempt == self._max_attempts:
+                    raise
+            else:
+                if getattr(response, "choices", None):
+                    return response
+                if attempt == self._max_attempts:
+                    raise RuntimeError("模型返回的 choices 为空")
+            self._sleep_backoff(attempt)
 
 
 class ScriptedLLM:
