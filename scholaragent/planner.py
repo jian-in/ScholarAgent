@@ -187,32 +187,35 @@ class Planner:
         if advice:
             context_lines.append(f"(上次执行未达标,改进建议:{advice})")
         prompt = "\n".join(context_lines)
-        # 步数预算:fast_gap 用固定上限;反思重试用减半上限 ——
-        # 一个坏步骤最多吃掉 1.5×max_steps,而不是 2×max_steps 的全量上下文调用。
-        # 两者都不命中时(如普通首次执行)直接跑,不碰 Agent 的原配置。
-        step_cap = None
-        if is_fast_gap_survey_task(task) and hasattr(self.agent, "max_steps"):
-            step_cap = FAST_GAP_MAX_STEPS
-        elif is_retry and hasattr(self.agent, "max_steps"):
-            step_cap = max(1, self.agent.max_steps // 2)
-
-        if step_cap is None:
+        # 先计算首次执行的有效预算,再给反思重试减半(至少 1 步)。
+        # fast_gap 上限和重试预算叠加,而不是互相覆盖。
+        # 普通首次执行和没有 max_steps 的旧 runner 保持原行为。
+        fast_gap = is_fast_gap_survey_task(task)
+        if not hasattr(self.agent, "max_steps") or not (fast_gap or is_retry):
             if context is None:
                 return self.agent.run(prompt)
             return context.invoke(self.agent, prompt)
 
         original_max_steps = self.agent.max_steps
+        step_cap = (
+            min(original_max_steps, FAST_GAP_MAX_STEPS)
+            if fast_gap else original_max_steps
+        )
+        if is_retry:
+            step_cap = max(1, step_cap // 2)
         original_tools = getattr(self.agent, "tools", None)
-        self.agent.max_steps = min(original_max_steps, step_cap)
-        if is_fast_gap_survey_task(task) and hasattr(original_tools, "subset"):
-            self.agent.tools = original_tools.subset(list(FAST_GAP_TOOL_NAMES))
+        restrict_tools = fast_gap and hasattr(original_tools, "subset")
         try:
+            self.agent.max_steps = min(original_max_steps, step_cap)
+            if restrict_tools:
+                self.agent.tools = original_tools.subset(list(FAST_GAP_TOOL_NAMES))
             if context is None:
                 return self.agent.run(prompt)
             return context.invoke(self.agent, prompt)
         finally:
             self.agent.max_steps = original_max_steps
-            self.agent.tools = original_tools
+            if restrict_tools:
+                self.agent.tools = original_tools
 
     def _reflect(self, step: str, result: str, context: RunContext = None):
         reply = self._chat(context, self.summary_llm, [
