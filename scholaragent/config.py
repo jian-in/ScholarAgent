@@ -64,8 +64,10 @@ if MODEL_ROUTING_MODE not in {"single", "split"}:
 # 长论文仍按块读取,但会话与角色交接需要有足够空间保留前文。
 CONVERSATION_MAX_CHARS = _positive_int("CONVERSATION_MAX_CHARS", 60000)
 TEAM_HANDOFF_MAX_CHARS = _positive_int("TEAM_HANDOFF_MAX_CHARS", 12000)
-PAPER_READER_CHUNK_CHARS = _positive_int("PAPER_READER_CHUNK_CHARS", 6000)
-PAPER_READER_MAX_STEPS = _positive_int("PAPER_READER_MAX_STEPS", 48)
+# read_paper 每次返回的块大小。与下方 AGENT_CONTEXT_PRUNE_THRESHOLD 对齐:
+# 块大于裁剪阈值时,每条结果都会经历"生成大块→裁剪定稿"的无谓浪费。
+PAPER_READER_CHUNK_CHARS = _positive_int("PAPER_READER_CHUNK_CHARS", 4800)
+PAPER_READER_MAX_STEPS = _positive_int("PAPER_READER_MAX_STEPS", 20)
 
 # 可选扫描版 PDF OCR。默认会从 PATH、项目所在磁盘的 Tesseract 目录和
 # Windows 常见安装目录发现命令；没有依赖时保持原有“如实降级”行为。
@@ -85,6 +87,12 @@ AGENT_CONTEXT_PRUNE_TAIL = _positive_int("AGENT_CONTEXT_PRUNE_TAIL", 1200)
 # Plan 模式写最终汇总时,每个步骤结果提供的最大字符数(保头保尾)。
 # 太小会导致汇总"看不到"步骤里真正的结论,输出显得残缺。
 PLAN_SYNTHESIS_STEP_CHARS = _positive_int("PLAN_SYNTHESIS_STEP_CHARS", 4000)
+
+# 单轮(run)成本护栏:max_steps 限的是"步",但一轮内模型可返回任意多个
+# tool_call(步数只 +1);messages 在单轮内只追加不裁剪。两个预算超限都
+# 走 Agent._closeout 的部分报告通道收尾,而不是默默烧钱。
+AGENT_MAX_TOOL_CALLS_PER_STEP = _positive_int("AGENT_MAX_TOOL_CALLS_PER_STEP", 4)
+AGENT_RUN_CHAR_BUDGET = _positive_int("AGENT_RUN_CHAR_BUDGET", 200000)
 
 
 def _nonnegative_float(name: str, default: float) -> float:
