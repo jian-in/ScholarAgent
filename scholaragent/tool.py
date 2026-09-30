@@ -11,7 +11,9 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import importlib.metadata
+import threading
 from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping
 
@@ -19,6 +21,73 @@ from typing import Any, Mapping
 # 工具可用这个前缀告诉 Agent:错误来自外部服务,继续换参数调用也没有意义。
 # Agent 会在本轮后续步骤中移除该工具,避免限流/断网时陷入重试循环。
 STOP_RETRY_PREFIX = "[本轮停止重试]"
+
+# 单个工具调用的超时(秒):防止某个工具 hang 住(网络下载、本地 OCR),
+# 把整个 Agent 循环冻住。超时后本轮继续,模型会收到明确的超时说明。
+DEFAULT_TOOL_TIMEOUT = 120.0
+
+
+class _ToolCallTimeout(TimeoutError):
+    """登记处的等待期限耗尽，与工具内部的 TimeoutError 区分。"""
+
+
+class _ToolCallBlocked(RuntimeError):
+    def __init__(self, message, kind):
+        super().__init__(message)
+        self.kind = kind
+
+
+class _ToolExecutionState:
+    """父登记处及其 subset 共用的有界执行状态。"""
+
+    max_workers = 4
+
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.pool = None
+        self.running = {}
+        self.pending_resets = set()
+
+    def prepare(self, tool):
+        key = id(tool)
+        if key in self.running:
+            raise _ToolCallBlocked(
+                f"工具 {tool.name} 上次调用仍在后台运行，已跳过重复执行", "tool_busy")
+        if key in self.pending_resets:
+            tool.start_run()
+            self.pending_resets.remove(key)
+
+    def start_run(self, tool):
+        with self.lock:
+            if id(tool) in self.running:
+                # 超时不代表结束：等旧调用结束后，在下一次调用前重置状态。
+                self.pending_resets.add(id(tool))
+            else:
+                tool.start_run()
+                self.pending_resets.discard(id(tool))
+
+    def submit(self, tool, arguments):
+        with self.lock:
+            self.prepare(tool)
+            if len(self.running) >= self.max_workers:
+                raise _ToolCallBlocked(
+                    "工具执行线程已占满，已跳过本次执行", "executor_busy")
+            if self.pool is None:
+                self.pool = concurrent.futures.ThreadPoolExecutor(
+                    max_workers=self.max_workers, thread_name_prefix="scholaragent-tool")
+            future = self.pool.submit(tool.run_result, **arguments)
+            self.running[id(tool)] = future
+            future.add_done_callback(lambda done: self._finished(tool, done))
+            return future
+
+    def _finished(self, tool, future):
+        with self.lock:
+            if self.running.get(id(tool)) is future:
+                del self.running[id(tool)]
+            if not self.running and self.pool is not None:
+                # 回调可能就在 worker 中执行，禁止等待自身退出。
+                self.pool.shutdown(wait=False)
+                self.pool = None
 
 
 @dataclass(frozen=True)
@@ -123,12 +192,18 @@ class Tool:
 class ToolRegistry:
     """工具登记处:Agent 从这里查询有哪些工具,并代替模型执行它们。"""
 
-    def __init__(self, tools=None, artifacts=None, workspace=None):
+    def __init__(self, tools=None, artifacts=None, workspace=None,
+                 tool_timeout=None):
         self._tools = {}
         self._run_tool_calls = 0
         # 可选:本轮产物收集器(工作台用来展示论文/笔记/记忆)
         self.artifacts = artifacts
         self.workspace = workspace
+        # None 表示用默认 120s;显式传 <=0 则关闭超时(保持旧行为)
+        self.tool_timeout = (DEFAULT_TOOL_TIMEOUT
+                             if tool_timeout is None else tool_timeout)
+        # subset 共享在途调用，避免同一个有状态工具在超时后被重复执行。
+        self._execution = _ToolExecutionState()
         for tool in tools or []:
             self.register(tool)
 
@@ -143,7 +218,32 @@ class ToolRegistry:
         """通知本登记处内的工具开始一轮新的任务。"""
         self._run_tool_calls = 0
         for tool in self._tools.values():
-            tool.start_run()
+            self._execution.start_run(tool)
+
+    def _run_with_timeout(self, tool: Tool, arguments: dict):
+        """执行工具,超时则放弃等待并抛 TimeoutError。
+
+        已开始的任务会继续运行，并可能继续产生副作用；同一工具在
+        完成前保持忙碌。空池自动回收，但永久阻塞的线程仍会阻碍
+        Python 解释器退出，此机制只限制调用方的等待时间。
+        """
+        timeout = self.tool_timeout
+        if not timeout or timeout <= 0:
+            with self._execution.lock:
+                self._execution.prepare(tool)
+            return tool.run_result(**arguments)
+        future = self._execution.submit(tool, arguments)
+        try:
+            return future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            if future.done():
+                # Python 3.11+ 的 futures.TimeoutError 是内建别名；工具
+                # 自己抛出的 TimeoutError 应原样走普通异常通道。
+                return future.result()
+            future.cancel()
+            raise _ToolCallTimeout(
+                f"工具 {tool.name} 执行超过 {timeout} 秒，已放弃等待；"
+                "已开始的调用仍可能在后台继续执行") from None
 
     @property
     def run_tool_calls(self) -> int:
@@ -184,10 +284,12 @@ class ToolRegistry:
         missing = [n for n in names if n not in self._tools]
         if missing:
             raise ValueError(f"登记处里没有这些工具:{', '.join(missing)}")
-        return ToolRegistry(
+        registry = ToolRegistry(
             [self._tools[n] for n in names], artifacts=self.artifacts,
-            workspace=self.workspace,
+            workspace=self.workspace, tool_timeout=self.tool_timeout,
         )
+        registry._execution = self._execution
+        return registry
 
     def call_result(self, name: str, arguments: dict, context=None) -> ToolResult:
         """执行工具并返回结构化结果。
@@ -208,8 +310,20 @@ class ToolRegistry:
         if context is not None:
             context.emit("tool_started", name=name, arguments=arguments)
             context.metrics.record_tool_call()
+        completed = False
         try:
-            result = adapt_tool_result(tool.run_result(**arguments))
+            result = adapt_tool_result(self._run_with_timeout(tool, arguments))
+            completed = True
+        except (_ToolCallTimeout, _ToolCallBlocked) as exc:
+            result = ToolResult(
+                text=f"{STOP_RETRY_PREFIX} 工具 {name}: {exc}",
+                success=False,
+                stop_retry=True,
+                diagnostic={
+                    "kind": "timeout" if isinstance(exc, _ToolCallTimeout) else exc.kind,
+                    "message": str(exc),
+                },
+            )
         except Exception as exc:  # 故意兜住一切异常,转成文字回传给模型
             result = ToolResult(
                 text=f"工具 {name} 执行出错:{type(exc).__name__}: {exc}",
@@ -221,7 +335,7 @@ class ToolRegistry:
                 },
             )
         metadata = list(result.artifacts)
-        if not metadata:
+        if not metadata and completed:
             try:
                 metadata = list(tool.artifact_metadata(arguments, result))
             except Exception:
