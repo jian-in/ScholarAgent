@@ -10,6 +10,7 @@ from .source_policy import SourcePolicy
 
 import inspect
 import threading
+import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -121,7 +122,8 @@ class RunContext:
                  metrics: MetricsCollector | None = None,
                  event_sink: EventSink | Callable[[RunEvent], None] | None = None,
                  should_stop: Callable[[], bool] | None = None,
-                 evidence: EvidenceLedger | None = None, pinned_sources=()):
+                 evidence: EvidenceLedger | None = None, pinned_sources=(),
+                 soft_timeout_seconds: float | None = None):
         self.run_id = run_id or uuid.uuid4().hex
         self.mode = mode
         self.workspace = workspace or default_workspace()
@@ -141,6 +143,25 @@ class RunContext:
         self._should_stop = should_stop
         self._terminal_event: str | None = None
         self.completion_issues: list[dict] = []
+        # P2-6:协作式软超时下沉到运行上下文,CLI/Web 共用同一通道。
+        # 不是强制杀任务:到期后在下一步边界触发取消,由执行器干净收尾。
+        try:
+            soft_timeout_seconds = (
+                float(soft_timeout_seconds) if soft_timeout_seconds else None)
+        except (TypeError, ValueError):
+            soft_timeout_seconds = None
+        if soft_timeout_seconds is not None and soft_timeout_seconds <= 0:
+            soft_timeout_seconds = None
+        self.soft_timeout_seconds = soft_timeout_seconds
+        self._soft_timeout_deadline = (
+            time.monotonic() + soft_timeout_seconds
+            if soft_timeout_seconds else None)
+
+    def soft_timeout_remaining(self) -> float | None:
+        """软超时剩余秒数;未配置返回 None,已到期返回 0。"""
+        if self._soft_timeout_deadline is None:
+            return None
+        return max(0.0, self._soft_timeout_deadline - time.monotonic())
 
     def mark_partial(self, reason: str, report: str = "") -> None:
         """执行终态与答案完整度分离；保留子步骤的未完成原因。"""
@@ -172,6 +193,15 @@ class RunContext:
 
     def is_cancelled(self) -> bool:
         if self.token.is_cancelled():
+            return True
+        if (self._soft_timeout_deadline is not None
+                and self._terminal_event is None
+                and time.monotonic() >= self._soft_timeout_deadline):
+            # 软超时只触发一次;终态后不再补发,避免"完成后又取消"的脏事件。
+            self._soft_timeout_deadline = None
+            self.request_cancel(
+                f"软超时:已运行约 {int(self.soft_timeout_seconds)}s,"
+                f"超过软限制 {int(self.soft_timeout_seconds)}s,正在协作式停止")
             return True
         if self._should_stop is not None:
             try:
