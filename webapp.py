@@ -562,7 +562,7 @@ class LocalWorkspace:
         config.LLM_MODEL = local_model
 
     def run(self, task: str, mode: str, on_progress=None, should_stop=None,
-            event_sink=None, model_routing=None):
+            event_sink=None, model_routing=None, soft_timeout_seconds=None):
         from scholaragent.agent import CANCELLED_ANSWER
 
         task = task.strip()
@@ -636,6 +636,7 @@ class LocalWorkspace:
             event_sink=event_sink,
             on_progress=on_progress,
             should_stop=should_stop,
+            soft_timeout_seconds=soft_timeout_seconds,
         )
         result_dict = result.to_dict()
         result_dict["model_routing"] = self._public_routing(routing_spec)
@@ -680,7 +681,6 @@ class LocalWorkspace:
                 raise ValueError("模型分工只支持 single 或 split。")
         job_id = self.jobs.create(task, mode, model_routing=selected_routing)
         soft_timeout = DEFAULT_SOFT_TIMEOUT_SECONDS
-        timeout_notified = {"done": False}
 
         def worker():
             self.jobs.mark_running(job_id)
@@ -690,19 +690,8 @@ class LocalWorkspace:
                 self.jobs.append_log(job_id, message)
 
             def should_stop():
-                if self.jobs.is_cancel_requested(job_id):
-                    return True
-                elapsed = time() - started
-                if elapsed >= soft_timeout:
-                    if not timeout_notified["done"]:
-                        timeout_notified["done"] = True
-                        self.jobs.request_cancel(job_id)
-                        on_progress(
-                            f"[超时] 已运行 {int(elapsed)}s，超过软限制 "
-                            f"{soft_timeout}s，正在协作式停止"
-                        )
-                    return True
-                return False
+                # 软超时已下沉到 RunContext(协作式取消),这里只看用户显式取消。
+                return self.jobs.is_cancel_requested(job_id)
 
             try:
                 result = self.run(
@@ -713,6 +702,7 @@ class LocalWorkspace:
                     event_sink=lambda event: self.jobs.append_event(job_id, event),
                     model_routing=(
                         selected_routing if user_selected_routing else None),
+                    soft_timeout_seconds=soft_timeout,
                 )
                 if result.get("status") == "failed":
                     self.jobs.fail(job_id, result.get("error") or "执行失败", result=result)
