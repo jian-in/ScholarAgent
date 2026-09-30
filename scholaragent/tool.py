@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import importlib.metadata
 from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping
@@ -19,6 +20,10 @@ from typing import Any, Mapping
 # 工具可用这个前缀告诉 Agent:错误来自外部服务,继续换参数调用也没有意义。
 # Agent 会在本轮后续步骤中移除该工具,避免限流/断网时陷入重试循环。
 STOP_RETRY_PREFIX = "[本轮停止重试]"
+
+# 单个工具调用的超时(秒):防止某个工具 hang 住(网络下载、本地 OCR),
+# 把整个 Agent 循环冻住。超时后本轮继续,模型会收到明确的超时说明。
+DEFAULT_TOOL_TIMEOUT = 120.0
 
 
 @dataclass(frozen=True)
@@ -123,12 +128,18 @@ class Tool:
 class ToolRegistry:
     """工具登记处:Agent 从这里查询有哪些工具,并代替模型执行它们。"""
 
-    def __init__(self, tools=None, artifacts=None, workspace=None):
+    def __init__(self, tools=None, artifacts=None, workspace=None,
+                 tool_timeout=None):
         self._tools = {}
         self._run_tool_calls = 0
         # 可选:本轮产物收集器(工作台用来展示论文/笔记/记忆)
         self.artifacts = artifacts
         self.workspace = workspace
+        # None 表示用默认 120s;显式传 <=0 则关闭超时(保持旧行为)
+        self.tool_timeout = (DEFAULT_TOOL_TIMEOUT
+                             if tool_timeout is None else tool_timeout)
+        # 超时隔离用的共享线程池:惰性创建,不用时不建线程
+        self._tool_pool = None
         for tool in tools or []:
             self.register(tool)
 
@@ -144,6 +155,31 @@ class ToolRegistry:
         self._run_tool_calls = 0
         for tool in self._tools.values():
             tool.start_run()
+
+    def _tool_executor(self):
+        """超时隔离用的共享线程池,惰性创建。"""
+        if self._tool_pool is None:
+            self._tool_pool = concurrent.futures.ThreadPoolExecutor(
+                max_workers=4, thread_name_prefix="scholaragent-tool")
+        return self._tool_pool
+
+    def _run_with_timeout(self, tool: Tool, arguments: dict):
+        """执行工具,超时则放弃等待并抛 TimeoutError。
+
+        超时的任务不强制杀死(Python 线程杀不死):对已开始执行的
+        future 调 cancel() 是无效的,这里只是不再等待它。后台线程
+        会随工具自然结束而回收 —— 比"整个循环冻住"好得多。
+        调用方的 except Exception 会把它转成文字回传给模型。
+        """
+        timeout = self.tool_timeout
+        if not timeout or timeout <= 0:
+            return tool.run_result(**arguments)
+        future = self._tool_executor().submit(tool.run_result, **arguments)
+        try:
+            return future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            future.cancel()
+            raise TimeoutError(f"工具 {tool.name} 执行超过 {timeout} 秒,已放弃等待")
 
     @property
     def run_tool_calls(self) -> int:
@@ -209,7 +245,7 @@ class ToolRegistry:
             context.emit("tool_started", name=name, arguments=arguments)
             context.metrics.record_tool_call()
         try:
-            result = adapt_tool_result(tool.run_result(**arguments))
+            result = adapt_tool_result(self._run_with_timeout(tool, arguments))
         except Exception as exc:  # 故意兜住一切异常,转成文字回传给模型
             result = ToolResult(
                 text=f"工具 {name} 执行出错:{type(exc).__name__}: {exc}",
