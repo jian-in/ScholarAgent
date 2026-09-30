@@ -133,8 +133,7 @@ def test_llm_client_extracts_cache_fields_from_usage():
         def create(self, **kwargs):
             return FakeResponse()
 
-    client = llm_module.LLMClient.__new__(llm_module.LLMClient)
-    client.model = "test"
+    client = llm_module.LLMClient(model="test", api_key="test")
     client._client = type("C", (), {})()
     client._client.chat = type(
         "Chat", (), {"completions": type("Comp", (), {"create": None})})()
@@ -175,8 +174,7 @@ def test_llm_client_derives_cache_miss_for_openai_style_usage():
         def create(self, **kwargs):
             return FakeResponse()
 
-    client = llm_module.LLMClient.__new__(llm_module.LLMClient)
-    client.model = "test"
+    client = llm_module.LLMClient(model="test", api_key="test")
     client._client = type("C", (), {})()
     client._client.chat = type(
         "Chat", (), {"completions": type("Comp", (), {"create": None})})()

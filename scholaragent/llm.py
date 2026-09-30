@@ -64,7 +64,7 @@ class LLMClient:
             self._client = OpenAI(
                 base_url=self._base_url,
                 api_key=self._api_key,
-                # 重试策略由本文件的 _create_completion 统一拥有,
+                # 重试策略由本文件的 _request_with_guard 统一拥有,
                 # SDK 内置重试关掉,避免两层退避叠加、难以归因。
                 max_retries=0,
                 timeout=self._timeout,
@@ -85,26 +85,12 @@ class LLMClient:
         time.sleep(min(2 ** attempt, 8) + random.uniform(0, 0.5))
 
     def _create_completion(self, messages, tools):
-        """带重试的单次请求:瞬时网络故障或空 choices 会触发重试。
-
-        非重试型错误(鉴权失败、参数错误)直接抛出;重试耗尽后抛出
-        最后一个异常 —— 不在这里吞掉,调用方需要知道这次是真失败了。
-        """
-        last_error = None
-        for attempt in range(1, self._max_attempts + 1):
-            try:
-                return self._client_instance().chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    tools=tools if tools else None,  # 空列表有些厂商会报错,统一转成 None
-                )
-            except Exception as exc:  # noqa: BLE001 —— 重试判定见 _is_retryable
-                last_error = exc
-                if attempt < self._max_attempts and _is_retryable(exc):
-                    self._sleep_backoff(attempt)
-                    continue
-                raise
-        raise last_error  # 防御性:正常不会走到这里
+        """只发送一次请求;所有重试共用 _request_with_guard 的预算。"""
+        return self._client_instance().chat.completions.create(
+            model=self.model,
+            messages=messages,
+            tools=tools if tools else None,
+        )
 
     def chat(self, messages, tools=None):
         """发送整段对话历史,拿回模型的一条回复。
@@ -165,17 +151,19 @@ class LLMClient:
         }
 
     def _request_with_guard(self, messages, tools):
-        """请求 + 空 choices 守卫:把"响应结构异常"也纳入重试语义。"""
-        last_error = None
+        """网络错误和空 choices 共用一个尝试上限,避免嵌套重试。"""
         for attempt in range(1, self._max_attempts + 1):
-            response = self._create_completion(messages, tools)
-            choices = getattr(response, "choices", None) or []
-            if choices:
-                return response
-            last_error = RuntimeError("模型返回的 choices 为空")
-            if attempt < self._max_attempts:
-                self._sleep_backoff(attempt)
-        raise last_error
+            try:
+                response = self._create_completion(messages, tools)
+            except Exception as exc:
+                if not _is_retryable(exc) or attempt == self._max_attempts:
+                    raise
+            else:
+                if getattr(response, "choices", None):
+                    return response
+                if attempt == self._max_attempts:
+                    raise RuntimeError("模型返回的 choices 为空")
+            self._sleep_backoff(attempt)
 
 
 class ScriptedLLM:
