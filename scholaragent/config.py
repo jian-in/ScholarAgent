@@ -67,6 +67,11 @@ TEAM_HANDOFF_MAX_CHARS = _positive_int("TEAM_HANDOFF_MAX_CHARS", 12000)
 PAPER_READER_CHUNK_CHARS = _positive_int("PAPER_READER_CHUNK_CHARS", 6000)
 PAPER_READER_MAX_STEPS = _positive_int("PAPER_READER_MAX_STEPS", 48)
 
+# 同一工具连续失败达到该次数后,本轮自动停用(熔断),避免外部服务故障时
+# 模型反复撞墙、把 max_steps 次 LLM 调用烧光。成功一次即清零。
+TOOL_CONSECUTIVE_FAILURE_LIMIT = _positive_int(
+    "SCHOLARAGENT_TOOL_CONSECUTIVE_FAILURE_LIMIT", 3)
+
 # 可选扫描版 PDF OCR。默认会从 PATH、项目所在磁盘的 Tesseract 目录和
 # Windows 常见安装目录发现命令；没有依赖时保持原有“如实降级”行为。
 OCR_LANGUAGE = os.getenv("SCHOLARAGENT_OCR_LANGUAGE", "chi_sim+eng")
