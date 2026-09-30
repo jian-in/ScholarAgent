@@ -172,16 +172,32 @@ def write_review_report(rows, output_dir):
     summary = review_summary(rows)
     material_hashes = defaultdict(set)
     missing_snapshots = []
+    missing_sources = []
+    version_mismatches = []
+    unexpected_sources = []
     for row in rows:
         snapshots = row.get("source_snapshots") or []
-        if row.get("pinned_sources") and not snapshots:
+        expected = set(row.get("pinned_sources") or [])
+        actual = {snapshot["arxiv_id"] for snapshot in snapshots}
+        if expected and not snapshots:
             missing_snapshots.append(row["run_id"])
+        for source in sorted(expected - actual):
+            missing_sources.append({"run_id": row["run_id"], "arxiv_id": source})
+            other_versions = sorted(item for item in actual if item.split("v", 1)[0] == source.split("v", 1)[0])
+            if other_versions:
+                version_mismatches.append({"run_id": row["run_id"], "expected": source,
+                                           "observed": other_versions})
+        for source in sorted(actual - expected) if expected else []:
+            unexpected_sources.append({"run_id": row["run_id"], "arxiv_id": source})
         for snapshot in snapshots:
             material_hashes[(row.get("task_id"), snapshot["arxiv_id"])].add(snapshot["sha256"])
     conflicts = [{"task_id": task, "arxiv_id": source, "sha256": sorted(hashes)}
                  for (task, source), hashes in material_hashes.items() if len(hashes) > 1]
-    sources = {"status": "not_observed" if not material_hashes else "conflicting" if conflicts else "observed_consistent",
-               "conflicts": conflicts, "runs_without_pdf_snapshot": missing_snapshots}
+    hash_status = "not_observed" if not material_hashes else "conflicting" if conflicts else "observed_consistent"
+    sources = {"status": "conflicting" if conflicts else "incomplete" if missing_sources or unexpected_sources else hash_status,
+               "hash_status": hash_status, "conflicts": conflicts,
+               "runs_without_pdf_snapshot": missing_snapshots, "missing_sources": missing_sources,
+               "version_mismatches": version_mismatches, "unexpected_sources": unexpected_sources}
     _write_jsonl(output / "reviewed_runs.jsonl", rows)
     with (output / "summary.json").open("x", encoding="utf-8") as handle:
         json.dump(summary, handle, ensure_ascii=False, indent=2)
@@ -209,7 +225,9 @@ def write_review_report(rows, output_dir):
         lines.append(f"- {mode}: " + "；".join(measurements))
     lines += ["", "## 输入材料一致性", "",
               f"实际 PDF 哈希检查：{sources['status']}；冲突 {len(conflicts)} 项；"
-              f"尚无 PDF 快照的运行 {len(missing_snapshots)} 项。详情见 sources.audit.json。",
+              f"尚无 PDF 快照的运行 {len(missing_snapshots)} 项；"
+              f"缺少指定文献 {len(missing_sources)} 项，版本偏差 {len(version_mismatches)} 项，"
+              f"额外材料 {len(unexpected_sources)} 项。详情见 sources.audit.json。",
               "仅有检索元数据的任务可能没有 PDF；缺少快照不等于材料已经一致。", "",
               "单次、小样本结果仅用于诊断；多次重复、独立评分和一致材料是正式比较的前提。", ""]
     (output / "report.md").write_text("\n".join(lines), encoding="utf-8")

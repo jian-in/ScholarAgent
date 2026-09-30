@@ -62,6 +62,8 @@ class SourceAnchor:
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "SourceAnchor":
+        if not isinstance(value, Mapping):
+            raise TypeError("来源锚点必须是对象")
         return cls(
             id=str(value.get("id") or ""),
             kind=str(value.get("kind") or "text"),

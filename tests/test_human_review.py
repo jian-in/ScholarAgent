@@ -176,6 +176,37 @@ def test_material_conflicts_are_visible_in_derived_report(tmp_path):
     assert audit["status"] == "conflicting" and len(audit["conflicts"]) == 1
 
 
+@pytest.mark.parametrize("observed_second", [None, "1512.03385v2", "1512.03385"])
+def test_each_pinned_source_is_checked_for_missing_or_wrong_version(tmp_path, observed_second):
+    rows = run_rows()
+    for row in rows:
+        row["pinned_sources"] = ["2210.03629v1", "1512.03385v1"]
+        row["source_snapshots"] = [{"arxiv_id": "2210.03629v1", "sha256": "same"}]
+        if observed_second:
+            row["source_snapshots"].append({"arxiv_id": observed_second, "sha256": "same-too"})
+    output = write_review_report(rows, tmp_path / "out")
+    audit = json.loads((output / "sources.audit.json").read_text(encoding="utf-8"))
+    assert audit["status"] == "incomplete"
+    assert audit["hash_status"] == "observed_consistent"
+    assert len(audit["missing_sources"]) == 2
+    assert {item["arxiv_id"] for item in audit["missing_sources"]} == {"1512.03385v1"}
+    assert len(audit["version_mismatches"]) == (2 if observed_second else 0)
+    assert len(audit["unexpected_sources"]) == (2 if observed_second else 0)
+    assert audit["runs_without_pdf_snapshot"] == []
+
+
+def test_exact_pinned_materials_are_consistent(tmp_path):
+    rows = run_rows()
+    for row in rows:
+        row["pinned_sources"] = ["2210.03629v1", "1512.03385v1"]
+        row["source_snapshots"] = [{"arxiv_id": source, "sha256": source}
+                                   for source in row["pinned_sources"]]
+    output = write_review_report(rows, tmp_path / "out")
+    audit = json.loads((output / "sources.audit.json").read_text(encoding="utf-8"))
+    assert audit["status"] == "observed_consistent"
+    assert not audit["missing_sources"] and not audit["version_mismatches"]
+
+
 def test_job_store_and_saved_replay_preserve_partial_completion():
     import webapp
     from scholaragent.replay import SavedCaseStore

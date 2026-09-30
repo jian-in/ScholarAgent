@@ -10,6 +10,8 @@ max_steps 是保险丝:防止模型陷入"无限调工具"的死循环,
 把 API 费用烧光。这是所有 Agent 框架都有的标配防护。
 """
 
+from collections.abc import Mapping
+
 from . import config
 from .events import RunContext
 from .llm import assistant_message
@@ -209,8 +211,12 @@ class Agent:
                         break
                     messages.append(assistant_message(summary_reply))
                     summarized = (summary_reply.get("content") or "").strip()
-                    if summarized:
-                        answer = summarized
+                    if not summarized:
+                        answer = self._partial_report("empty_summary")
+                        self._mark_partial(context, "empty_summary", answer)
+                        finished = True
+                        break
+                    answer = summarized
 
                 if not answer:
                     messages.append({
@@ -314,8 +320,21 @@ class Agent:
                     "text": result,
                 })
                 if tool_result.artifacts:
-                    anchors = [anchor for artifact in tool_result.artifacts
-                               for anchor in artifact.get("source_anchors", [])]
+                    known_anchors = {anchor.id: anchor for anchor in context.evidence.anchors}
+                    anchors = []
+                    for artifact in tool_result.artifacts:
+                        raw = artifact.get("source_anchors") if isinstance(artifact, Mapping) else None
+                        if not isinstance(raw, (list, tuple)):
+                            continue
+                        for anchor in raw:
+                            if not isinstance(anchor, Mapping):
+                                continue
+                            anchor_id = anchor.get("id")
+                            if not isinstance(anchor_id, str):
+                                continue
+                            known = known_anchors.get(anchor_id)
+                            if known and known.source == anchor.get("source"):
+                                anchors.append(known.to_dict())
                     if anchors:
                         result += "\n来源锚点（结论引用这些 ID）：\n" + "\n".join(
                             f"[{anchor['id']}] {anchor['source']} 第 {anchor.get('page') or '?'} 页"

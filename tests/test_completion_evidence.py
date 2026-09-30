@@ -89,6 +89,21 @@ def test_failed_summary_keeps_evidence_and_records_failed_attempt():
     assert agent.last_metrics.prompt_tokens is None
 
 
+@pytest.mark.parametrize("content", ["", "  ", None])
+def test_empty_summary_handoff_keeps_observations_and_marks_partial(content):
+    primary = RecordingLLM([call(), final("主模型答案。[S001]")])
+    summary = RecordingLLM([final(content)])
+    context = RunContext()
+    agent = Agent(primary, ToolRegistry([EvidenceTool()]), summary_llm=summary,
+                  max_steps=4, verbose=False)
+    answer = agent.run("调研", context=context)
+    assert "方法使用残差连接" in answer and "empty_summary" in answer
+    assert agent.last_completion == {"completeness": "partial", "reason": "empty_summary"}
+    assert context.completion_issues[0]["reason"] == "empty_summary"
+    assert len(primary.tools_seen) + len(summary.tools_seen) == 3
+    assert summary.tools_seen == [None]
+
+
 @pytest.mark.parametrize("budget", [0, 1])
 def test_tiny_budget_never_starts_tools_or_exceeds_model_budget(budget):
     llm, tool = RecordingLLM([call()]), EvidenceTool()
@@ -220,6 +235,23 @@ def test_tool_observation_uses_rebased_id_across_multiple_sources(tmp_path):
     assert result.evidence["summary"]["anchors"] == 2
     assert result.evidence["claims"][0]["anchor_ids"] == ["S001", "S002"]
     assert audit_run_result(result).ok
+
+
+@pytest.mark.parametrize("anchor", [{"id": "S001", "kind": "text"},
+                                   {"id": [], "source": "paper"}, "bad anchor"])
+def test_bad_anchor_metadata_never_turns_a_usable_tool_into_failure(anchor):
+    class BrokenMetadata(Tool):
+        name = "broken_metadata"
+
+        def run_result(self):
+            return ToolResult("usable result", artifacts=({
+                "source_anchors": [anchor],
+            },))
+
+    llm = RecordingLLM([call("broken_metadata"), final("保留可用结果")])
+    agent = Agent(llm, ToolRegistry([BrokenMetadata()]), verbose=False)
+    assert agent.run("任务") == "保留可用结果"
+    assert "usable result" in str(llm.last_messages)
 
 
 def test_retry_attempts_include_failures_and_token_totals_stay_unknown(monkeypatch):
