@@ -63,9 +63,8 @@ class MetricsCollector:
         self._request_attempts += request_attempts
         if request_attempts != 1 or not usage:
             self._token_accounting_complete = False
-        # SDK 重试或空响应的 usage 未全部返回：总 token 保持未知。
-        if request_attempts != 1:
-            usage = None
+        # P2-2:重试后成功时,早前失败 attempt 的 token 已不可知,总量仍标记
+        # 不完整;但成功 attempt 的 usage 如实计入,不再整体丢弃。
         role_key = str(role or "general")
         bucket = self._llm_usage_by_role.setdefault(role_key, {
             "provider": provider,
