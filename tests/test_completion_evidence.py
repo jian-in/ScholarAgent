@@ -254,7 +254,7 @@ def test_bad_anchor_metadata_never_turns_a_usable_tool_into_failure(anchor):
     assert "usable result" in str(llm.last_messages)
 
 
-def test_retry_attempts_include_failures_and_token_totals_stay_unknown(monkeypatch):
+def test_retry_attempts_include_failures_and_successful_usage_is_recorded(monkeypatch):
     client = LLMClient(model="test", api_key="test", max_attempts=2)
     response = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="ok", tool_calls=None))],
                                usage=SimpleNamespace(prompt_tokens=10, completion_tokens=2))
@@ -266,7 +266,10 @@ def test_retry_attempts_include_failures_and_token_totals_stay_unknown(monkeypat
     assert context.chat(client, [{"role": "user", "content": "hello"}])["content"] == "ok"
     metrics = context.metrics.finish()
     assert metrics.llm_calls == 1 and metrics.request_attempts == 2
-    assert metrics.prompt_tokens is None
+    # P2-2:成功 attempt 的 usage 如实计入,不再整体丢弃
+    assert metrics.prompt_tokens == 10
+    assert metrics.completion_tokens == 2
+    # 但早前失败 attempt 的 token 不可知,总量仍标记不完整
     assert metrics.token_accounting_complete is False
 
 
