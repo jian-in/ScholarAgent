@@ -132,7 +132,12 @@ def run_task_with_mode(agent: Agent, mode: str, task: str) -> tuple[str, str]:
     runtime = getattr(agent, "_runtime", None)
     if runtime is not None:
         # CLI 是运行事件的打印适配器；核心执行层不再决定终端格式。
-        result = runtime.run(task, mode=mode, event_sink=lambda event: print(event_message(event)))
+        # 软超时与 Web 共用同一 RunContext 通道(协作式取消)。
+        result = runtime.run(
+            task, mode=mode,
+            event_sink=lambda event: print(event_message(event)),
+            soft_timeout_seconds=config.JOB_SOFT_TIMEOUT_SECONDS,
+        )
         if result.status == "failed":
             raise RuntimeError(result.error or "运行失败")
         executed = result.mode or mode
