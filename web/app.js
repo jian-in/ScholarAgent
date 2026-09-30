@@ -492,6 +492,7 @@ function renderArtifacts(artifacts) {
 
 function formatTokenUsage(metrics) {
   if (!metrics || metrics.prompt_tokens == null || metrics.completion_tokens == null) {
+    if (metrics && metrics.token_accounting_complete === false) return "Token 未完整返回（含失败或重试）";
     return "Token 未返回";
   }
   const promptTokens = Number(metrics.prompt_tokens);
@@ -533,7 +534,7 @@ function renderResult(result, source = "realtime", eventOverride = null) {
   const tokenText = formatTokenUsage(metrics);
   const roleTokenText = formatRoleTokenUsage(metrics);
   const metricText = metrics
-    ? `LLM ${metrics.llm_calls} 次 · 工具 ${metrics.tool_calls} 次 · ${tokenText}` +
+    ? `LLM ${metrics.llm_calls} 次 · 请求尝试 ${metrics.request_attempts ?? metrics.llm_calls} 次 · 工具 ${metrics.tool_calls} 次 · ${tokenText}` +
       (roleTokenText ? ` · ${roleTokenText}` : "")
     : "指标未采集";
   lastAnswerText = result.answer || "";
@@ -558,11 +559,12 @@ function renderResult(result, source = "realtime", eventOverride = null) {
   };
   const evidenceSummary = result.evidence && result.evidence.summary;
   const evidenceLabel = evidenceSummary
-    ? `证据锚点 ${evidenceSummary.anchors || 0} · 校验 ${evidenceSummary.validation_errors ? "有误" : "通过"}`
+    ? `证据锚点 ${evidenceSummary.anchors || 0} · 结构校验 ${evidenceSummary.validation_errors ? "有误" : "通过"} · 人工核验 ${evidenceSummary.verified_claims || 0} · 待核验 ${evidenceSummary.unreviewed_claims || 0}`
     : "";
-  const statusLabel = result.status === "failed"
+  const statusLabel = result.status === "failed" || result.status === "error"
     ? "失败"
-    : result.status === "cancelled" ? "已取消" : "完成";
+    : result.status === "cancelled" ? "已取消"
+      : result.completion && result.completion.completeness === "partial" ? "部分完成" : "执行结束";
   resultBody.innerHTML =
     `<div class="result-meta">` +
     `<span>${escapeHtml(sourceLabel)}</span>` +
@@ -576,8 +578,32 @@ function renderResult(result, source = "realtime", eventOverride = null) {
     (result.score_state ? `<span>${escapeHtml(scoreLabels[result.score_state] || result.score_state)}</span>` : "") +
     `</div>` +
     (result.error ? `<p class="result-error">${escapeHtml(result.error)}</p>` : "") +
-    `<div class="${answerClass}">${answerInner}</div>`;
+    `<div class="${answerClass}">${answerInner}</div>` + renderClaimEvidence(result.evidence) +
+    (result.status === "cancelled" && result.completion && result.completion.partial_reports
+      ? `<details><summary>取消前的阶段结果</summary><pre>${escapeHtml(result.completion.partial_reports.join("\n\n"))}</pre></details>` : "");
   setCopyVisible(Boolean(lastAnswerText));
+}
+
+function renderClaimEvidence(evidence) {
+  if (!evidence || !Array.isArray(evidence.claims) || !evidence.claims.length) return "";
+  const anchors = new Map((evidence.anchors || []).map(anchor => [anchor.id, anchor]));
+  const labels = { unreviewed: "待人工核验", verified: "人工核验通过", rejected: "人工核验未通过" };
+  const items = evidence.claims.map(claim => {
+    const sources = (claim.anchor_ids || []).map(id => {
+      const anchor = anchors.get(id);
+      if (!anchor) return `<li>来源缺失：${escapeHtml(id)}</li>`;
+      const match = /^arxiv:(\d{4}\.\d{4,5}(?:v\d+)?)$/.exec(anchor.source || "");
+      const page = Number(anchor.page);
+      const link = match
+        ? `<a target="_blank" rel="noopener noreferrer" href="https://arxiv.org/pdf/${match[1]}${Number.isInteger(page) && page > 0 ? `#page=${page}` : ""}">查看论文原文</a>` : "";
+      return `<li>[${escapeHtml(id)}] ${escapeHtml(anchor.source)} · 第 ${escapeHtml(anchor.page || "?")} 页 ${link}` +
+        `<blockquote>${escapeHtml(anchor.excerpt || "摘录未记录，请核对原文")}</blockquote></li>`;
+    }).join("");
+    return `<li><strong>${escapeHtml(claim.claim)}</strong> · ${escapeHtml(labels[claim.review_status] || "待人工核验")}` +
+      (claim.reviewer ? ` · 核验者 ${escapeHtml(claim.reviewer)} · ${escapeHtml(claim.note || "")}` : "") +
+      `<ul>${sources || "<li>尚未绑定原文来源</li>"}</ul></li>`;
+  }).join("");
+  return `<details class="claim-evidence"><summary>结论与原文证据（结构校验不等于事实核验）</summary><ol>${items}</ol></details>`;
 }
 
 function finishUi() {

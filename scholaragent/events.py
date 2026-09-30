@@ -30,6 +30,7 @@ EVENT_TYPES = frozenset({
     "cancelled",
     "failed",
     "completed",
+    "partial_result",
 })
 
 
@@ -136,6 +137,13 @@ class RunContext:
         self.token = CancellationToken()
         self._should_stop = should_stop
         self._terminal_event: str | None = None
+        self.completion_issues: list[dict] = []
+
+    def mark_partial(self, reason: str, report: str = "") -> None:
+        """执行终态与答案完整度分离；保留子步骤的未完成原因。"""
+        issue = {"reason": reason, "report": report}
+        self.completion_issues.append(issue)
+        self.emit("partial_result", reason=reason, report_preview=report[:240])
 
     @property
     def event_list(self) -> list[RunEvent]:
@@ -209,12 +217,21 @@ class RunContext:
             tool_schema_count=len(tools or []),
             **metadata,
         )
-        reply = llm.chat(messages, tools=tools)
+        try:
+            reply = llm.chat(messages, tools=tools)
+        except Exception:
+            self.metrics.record_llm_call(
+                None, role=metadata.get("role"), provider=metadata.get("provider"),
+                model=metadata.get("model"),
+                request_attempts=getattr(llm, "last_request_attempts", 1),
+            )
+            raise
         self.metrics.record_llm_call(
             reply.get("usage"),
             role=metadata.get("role"),
             provider=metadata.get("provider"),
             model=metadata.get("model"),
+            request_attempts=getattr(llm, "last_request_attempts", 1),
         )
         return reply
 

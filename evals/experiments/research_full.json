@@ -1,0 +1,10 @@
+{
+  "schema_version": "experiment-definition-v1",
+  "id": "research-full-v1",
+  "tasks": "../research_tasks.jsonl",
+  "strategy": "fixed",
+  "modes": ["react", "plan", "team"],
+  "team_require_full_paper": false,
+  "config": {"agent_max_steps": 15},
+  "strategy_version": "research-baseline-v1"
+}

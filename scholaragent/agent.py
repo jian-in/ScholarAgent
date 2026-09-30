@@ -10,6 +10,8 @@ max_steps 是保险丝:防止模型陷入"无限调工具"的死循环,
 把 API 费用烧光。这是所有 Agent 框架都有的标配防护。
 """
 
+from collections.abc import Mapping
+
 from . import config
 from .events import RunContext
 from .llm import assistant_message
@@ -33,6 +35,11 @@ LOCAL_SUMMARY_INSTRUCTION = (
     "外部调研阶段已经结束，现在进入内部总结阶段。"
     "请只根据上方已经获得的工具证据整理本步骤摘要，保留必要的出处和不确定性；"
     "不要调用工具，不要补充材料中没有的事实。"
+)
+
+EVIDENCE_INSTRUCTION = (
+    "若工具结果附带来源锚点，重要结论请在同一行标注 [S001] 形式的锚点 ID。"
+        "只引用本轮工具提供的 ID；没有原文支持时明确说明资料缺口。"
 )
 
 
@@ -72,7 +79,7 @@ class Agent:
         self._active_context = None
 
     def run(self, task: str, context: RunContext = None) -> str:
-        """执行一个任务,返回最终回答。"""
+        """执行与收尾共用 max_steps 预算，异常也恢复上下文。"""
         owns_context = context is None
         context = context or RunContext(
             mode=self.metrics_mode,
@@ -80,16 +87,28 @@ class Agent:
         )
         self._active_context = context
         self._context_external = not owns_context
+        self.last_completion = {"completeness": "complete", "reason": "answered"}
+        self._observations = []
+        try:
+            return self._run(task, context)
+        finally:
+            self.last_metrics = (
+                context.metrics.finish(self.tools.run_tool_calls)
+                if owns_context else context.metrics.snapshot()
+            )
+            self._active_context = None
+            self._context_external = False
+
+    def _run(self, task: str, context: RunContext) -> str:
         self.tools.start_run()
-        metrics = context.metrics
         # 有会话记忆就接着上次聊,没有就开新对话。
         # 注意 list(...) 复制:必须在副本上追加消息,任务被中断(如 Ctrl+C)时
         # 才不会把"只有工具调用、没有工具结果"的半截轮次漏进记忆 ——
         # 那种残缺历史发给 API 会永久报错,整个会话就废了
         if self.conversation:
-            messages = list(self.conversation.load(self.system_prompt))
+            messages = list(self.conversation.load(self.system_prompt + EVIDENCE_INSTRUCTION))
         else:
-            messages = [{"role": "system", "content": self.system_prompt}]
+            messages = [{"role": "system", "content": self.system_prompt + EVIDENCE_INSTRUCTION}]
 
         # 自动回忆(RAG 的"检索"半步):把长期记忆里相关的内容连同出处
         # 附在任务后,并明确告知模型这些内容仅供参考
@@ -114,22 +133,34 @@ class Agent:
         remembered_arguments = {}
         had_tool_evidence = False
         summary_handed_off = False
+        model_calls = 0
+        finished = False
         for step in range(1, self.max_steps + 1):
             if self._stop_requested():
                 self._log("[取消] 用户已请求停止,在下一步边界退出")
                 answer = CANCELLED_ANSWER
+                break
+            if self.max_steps - model_calls <= 1:
+                answer = self._closeout(messages, context, request_summary=model_calls < self.max_steps)
+                finished = True
                 break
             # ① 思考:把完整对话历史 + 工具清单交给模型。
             # 历史中每条消息在创建时即已裁剪定稿(见 _finalize_observation),
             # 此处不再改写 —— 请求前缀逐字节稳定,模型前缀缓存全程有效。
             # 工具清单保持固定:把停用工具从请求中移除会改变 tools 参数,
             # 同样会打失效缓存;停用约束由调用时的文字回传继续执行。
-            reply = context.chat(
-                self.llm,
-                messages,
-                tools=self.tools.schemas(),
-                step=step,
-            )
+            model_calls += 1
+            try:
+                reply = context.chat(
+                    self.llm, messages, tools=self.tools.schemas(), step=step,
+                )
+            except Exception:
+                if not self._observations:
+                    raise
+                answer = self._partial_report("model_error")
+                self._mark_partial(context, "model_error", answer)
+                finished = True
+                break
             messages.append(assistant_message(reply))
 
             # ② 判断:模型不再要求调工具,说明它认为任务完成了
@@ -153,6 +184,7 @@ class Agent:
                     and not summary_handed_off
                     and self.summary_llm is not None
                     and self.summary_llm is not self.llm
+                    and model_calls < self.max_steps
                 ):
                     # 这是一次明确的模型交接：主模型负责外部调研，
                     # 总结模型只看到已产生的证据，且拿不到任何工具 schema。
@@ -162,16 +194,29 @@ class Agent:
                         "role": "user",
                         "content": LOCAL_SUMMARY_INSTRUCTION,
                     })
-                    summary_reply = context.chat(
-                        self.summary_llm,
-                        messages,
-                        tools=None,
-                        step="summary",
-                    )
+                    model_calls += 1
+                    try:
+                        summary_reply = context.chat(
+                            self.summary_llm, messages, tools=None, step="summary",
+                        )
+                    except Exception:
+                        answer = self._partial_report("summary_failed")
+                        self._mark_partial(context, "summary_failed", answer)
+                        finished = True
+                        break
+                    if summary_reply.get("tool_calls"):
+                        answer = self._partial_report("summary_requested_tools")
+                        self._mark_partial(context, "summary_requested_tools", answer)
+                        finished = True
+                        break
                     messages.append(assistant_message(summary_reply))
                     summarized = (summary_reply.get("content") or "").strip()
-                    if summarized:
-                        answer = summarized
+                    if not summarized:
+                        answer = self._partial_report("empty_summary")
+                        self._mark_partial(context, "empty_summary", answer)
+                        finished = True
+                        break
+                    answer = summarized
 
                 if not answer:
                     messages.append({
@@ -193,6 +238,7 @@ class Agent:
                     })
                     continue
                 self._log(f"[第 {step} 步] 最终回答:{answer}")
+                finished = True
                 break
 
             # ③ 行动 + 观察:逐个执行模型点名的工具,结果回填进对话
@@ -269,6 +315,31 @@ class Agent:
                     if tool_result.stop_retry:
                         disabled_tools.add(tool_name)
                 self._log(f"[第 {step} 步] 工具返回:{result}")
+                self._observations.append({
+                    "name": tool_name, "success": tool_result.success,
+                    "text": result,
+                })
+                if tool_result.artifacts:
+                    known_anchors = {anchor.id: anchor for anchor in context.evidence.anchors}
+                    anchors = []
+                    for artifact in tool_result.artifacts:
+                        raw = artifact.get("source_anchors") if isinstance(artifact, Mapping) else None
+                        if not isinstance(raw, (list, tuple)):
+                            continue
+                        for anchor in raw:
+                            if not isinstance(anchor, Mapping):
+                                continue
+                            anchor_id = anchor.get("id")
+                            if not isinstance(anchor_id, str):
+                                continue
+                            known = known_anchors.get(anchor_id)
+                            if known and known.source == anchor.get("source"):
+                                anchors.append(known.to_dict())
+                    if anchors:
+                        result += "\n来源锚点（结论引用这些 ID）：\n" + "\n".join(
+                            f"[{anchor['id']}] {anchor['source']} 第 {anchor.get('page') or '?'} 页"
+                            for anchor in anchors
+                        )
                 messages.append({
                     "role": "tool",
                     # tool_call_id 让模型知道这段结果对应它的哪一次调用。
@@ -280,19 +351,75 @@ class Agent:
             if answer == CANCELLED_ANSWER:
                 break
 
-        # 无论正常结束还是撞上步数上限,都要把对话写回会话记忆。
+        if answer == CANCELLED_ANSWER:
+            if self.last_completion["reason"] != "cancelled":
+                self._mark_partial(context, "cancelled", self._partial_report("cancelled"))
+        elif not finished:
+            answer = self._closeout(messages, context, request_summary=False)
+        if answer != CANCELLED_ANSWER and (
+            not messages or messages[-1].get("role") != "assistant"
+            or messages[-1].get("content") != answer
+        ):
+            messages.append({"role": "assistant", "content": answer})
+        # 取消时不保存含未配对工具调用的半截历史。
         # 写回前把注入的回忆内容从 user 消息里剥掉:注入只服务于本轮,
         # 落进历史会导致同样的记忆逐轮重复累积、白白吃掉裁剪预算
-        if self.conversation:
+        if self.conversation and answer != CANCELLED_ANSWER:
             user_message["content"] = original_task
             self.conversation.save(messages)
-        self.last_metrics = (
-            metrics.finish(self.tools.run_tool_calls)
-            if owns_context else metrics.snapshot()
-        )
-        self._active_context = None
-        self._context_external = False
         return answer
+
+    def _mark_partial(self, context, reason, report):
+        self.last_completion = {"completeness": "partial", "reason": reason}
+        context.mark_partial(reason, report)
+
+    def _partial_report(self, reason, summary="", closeout_reason=""):
+        pending = self.tools.pending_completions(self.required_tool_completions)
+        lines = ["## 阶段结果（部分完成）", f"停止原因：{reason}；最大步数预算 {self.max_steps}。"]
+        if closeout_reason:
+            lines.append(f"收尾情况：{closeout_reason}。")
+        if summary:
+            lines += ["", "### 已有材料摘要（待核验）", summary]
+        lines += ["", "### 已获得的工具结果"]
+        if self._observations:
+            for observation in self._observations[-8:]:
+                state = "成功" if observation["success"] else "失败"
+                lines.append(f"- {observation['name']}（{state}）：{str(observation['text'])[:600]}")
+            if len(self._observations) > 8:
+                lines.append("更早的调用保留在运行事件与产物中。")
+        else:
+            lines.append("尚未获得工具证据。")
+        lines += ["", "### 证据缺口", "本结果仅保留已获得材料，任务完整度仍待核对。"]
+        if pending:
+            lines.append(f"尚未完成必要工具流程：{', '.join(pending)}。")
+        if any(not item["success"] for item in self._observations):
+            lines.append("有工具调用失败，相关材料存在缺口。")
+        return "\n".join(lines)
+
+    def _closeout(self, messages, context, request_summary):
+        summary = ""
+        closeout_reason = "not_requested"
+        if request_summary and not context.is_cancelled():
+            messages.append({"role": "user", "content": LOCAL_SUMMARY_INSTRUCTION +
+                             "预算即将耗尽，只整理已有材料并列出缺口。"})
+            try:
+                reply = context.chat(self.summary_llm or self.llm, messages,
+                                     tools=None, step="budget_summary")
+                if not reply.get("tool_calls"):
+                    summary = (reply.get("content") or "").strip()
+                    closeout_reason = "summarized" if summary else "empty_summary"
+                else:
+                    closeout_reason = "summary_requested_tools"
+            except Exception:
+                # 确定性报告使用已有结果，不在收尾阶段叠加新请求。
+                closeout_reason = "summary_failed"
+        if context.is_cancelled():
+            report = self._partial_report("cancelled")
+            self._mark_partial(context, "cancelled", report)
+            return CANCELLED_ANSWER
+        report = self._partial_report("budget_exhausted", summary, closeout_reason)
+        self._mark_partial(context, "budget_exhausted", report)
+        return report
 
     def _finalize_observation(self, content):
         """工具结果创建时立即裁剪定稿:超阈值就保头保尾,之后永不改写。

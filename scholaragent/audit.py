@@ -12,6 +12,8 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
+from .evidence import ClaimEvidence, EvidenceLedger, SourceAnchor
+
 
 TERMINAL_EVENTS = frozenset({"completed", "failed", "cancelled"})
 VALID_STATUSES = frozenset({"completed", "failed", "cancelled"})
@@ -125,7 +127,16 @@ def audit_run_result(result: Any) -> AuditReport:
         checks["evidence_valid"] = False
         errors.append("evidence 必须是 mapping")
     else:
-        validation_errors = evidence.get("validation_errors", ())
+        validation_errors = list(evidence.get("validation_errors", ()))
+        if evidence.get("schema_version") == "evidence-ledger-v1":
+            try:
+                ledger = EvidenceLedger(
+                    anchors=[SourceAnchor.from_dict(anchor) for anchor in evidence.get("anchors", [])],
+                    claims=[ClaimEvidence(**claim) for claim in evidence.get("claims", [])],
+                )
+                validation_errors.extend(ledger.validate())
+            except (TypeError, ValueError, KeyError) as exc:
+                validation_errors.append(f"证据结构异常: {type(exc).__name__}")
         checks["evidence_valid"] = not bool(validation_errors)
         if validation_errors:
             errors.append(
