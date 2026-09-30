@@ -17,6 +17,8 @@ import threading
 from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping
 
+from .source_policy import SourceMismatch
+
 
 # 工具可用这个前缀告诉 Agent:错误来自外部服务,继续换参数调用也没有意义。
 # Agent 会在本轮后续步骤中移除该工具,避免限流/断网时陷入重试循环。
@@ -307,9 +309,24 @@ class ToolRegistry:
             )
             self._record_result(name, arguments, result, context)
             return result
+        mismatch = None
+        if context is not None and name in {"download_paper", "read_paper"}:
+            try:
+                arxiv_id = context.source_policy.resolve(arguments.get("arxiv_id"))
+                if context.source_policy.pinned:
+                    arguments = {**arguments, "arxiv_id": arxiv_id}
+            except SourceMismatch as exc:
+                mismatch = ToolResult(
+                    text=str(exc), success=False,
+                    diagnostic={"kind": exc.kind, "requested": exc.requested,
+                                "pinned_sources": list(exc.pinned)},
+                )
         if context is not None:
             context.emit("tool_started", name=name, arguments=arguments)
             context.metrics.record_tool_call()
+        if mismatch is not None:
+            self._record_result(name, arguments, mismatch, context)
+            return mismatch
         completed = False
         try:
             result = adapt_tool_result(self._run_with_timeout(tool, arguments))

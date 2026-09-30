@@ -122,7 +122,7 @@ class ResearchTeam:
             self._log("[团队] 精读员开工")
             notes = context.invoke(
                 self.reader,
-                f"这是检索员的报告:\n{_clip(report)}\n\n"
+                f"原始任务:{topic}\n\n这是检索员的报告:\n{_clip(report)}\n\n"
                 f"请精读其中推荐的论文,产出精读笔记",
             )
             if notes == CANCELLED_ANSWER or self._stop_requested():

@@ -140,6 +140,19 @@ def _format_papers(papers: list, source: str = "arXiv") -> str:
     return "\n".join(lines)
 
 
+def _paper_result(papers: list, source: str = "arXiv") -> ToolResult:
+    """锚点来自解析后的检索记录；保留实际版本与元数据层级。"""
+    anchors = [{
+        "id": f"S{i:03d}", "kind": "metadata", "source": f"arxiv:{paper['id']}",
+        "locator": f"search:{source}", "confidence": "medium",
+        "excerpt": f"{paper['title']} | {paper['published']} | "
+                   + ", ".join(paper['authors']) + " | 摘要: " + paper['summary'][:300],
+    } for i, paper in enumerate(papers, 1)]
+    return ToolResult(_format_papers(papers, source), artifacts=({
+        "kind": "search", "provider": source, "source_anchors": anchors,
+    },))
+
+
 def _normalize_date(value: str) -> str:
     """校验 YYYY-MM-DD 并返回紧凑形式 YYYYMMDD(arXiv 区间语法用)。"""
     match = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", str(value).strip())
@@ -233,6 +246,12 @@ class ArxivSearchTool(Tool):
     def run(self, query: str, max_results: int = 5,
             sort_by: str = "relevance", categories=None,
             from_date: str = None) -> str:
+        result = self._search(query, max_results, sort_by, categories, from_date)
+        return result.text if isinstance(result, ToolResult) else result
+
+    def _search(self, query: str, max_results: int = 5,
+                sort_by: str = "relevance", categories=None,
+                from_date: str = None):
         max_results = max(1, min(int(max_results), 10))  # 防模型狮子大开口挤爆上下文
         sort_by = str(sort_by or "relevance").strip().lower()
         if sort_by not in _SORT_API_NAMES:
@@ -290,7 +309,7 @@ class ArxivSearchTool(Tool):
         papers = _parse_atom(response.text)
         if not papers:
             return f"没有找到与「{query}」相关的论文,请换个英文关键词试试"
-        return _format_papers(papers[:max_results])
+        return _paper_result(papers[:max_results])
 
     def run_result(self, query: str, max_results: int = 5,
                    **kwargs) -> ToolResult:
@@ -300,7 +319,9 @@ class ArxivSearchTool(Tool):
         ToolRegistry 会把模型给出的全部参数透传进来,签名写死会导致
         增强参数触发 TypeError。
         """
-        legacy = self.run(query, max_results, **kwargs)
+        legacy = self._search(query, max_results, **kwargs)
+        if isinstance(legacy, ToolResult):
+            return legacy
         if legacy.startswith(STOP_RETRY_PREFIX):
             return ToolResult(
                 text=legacy[len(STOP_RETRY_PREFIX):].lstrip(),
@@ -314,7 +335,7 @@ class ArxivSearchTool(Tool):
                          arxiv_error: str,
                          source: str = "OpenAlex 的 arXiv 索引（自动备用）",
                          sort_by: str = "relevance", categories=None,
-                         from_date: str = None) -> str:
+                         from_date: str = None) -> str | ToolResult:
         """arXiv 持续限流时改查 OpenAlex 的 arXiv 索引。"""
         try:
             papers = self._search_openalex(
@@ -326,7 +347,7 @@ class ArxivSearchTool(Tool):
         if not papers:
             return (f"没有找到与「{query}」相关且带 arXiv 编号的论文"
                     f"（arXiv 接口状态:{arxiv_error}）")
-        return _format_papers(papers[:max_results], source=source)
+        return _paper_result(papers[:max_results], source=source)
 
     def _search_openalex(self, query: str, max_results: int,
                          sort_by: str = "relevance", categories=None,
