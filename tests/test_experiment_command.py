@@ -23,7 +23,7 @@ def test_experiment_manifest_generates_evidence_and_markdown_once(tmp_path):
 
     def factory(**kwargs):
         return create_runtime(
-            llm=ScriptedLLM([{"content": "离线回答", "tool_calls": []}]),
+            llm=ScriptedLLM([{"content": "离线回答", "tool_calls": []}], model="offline-scripted"),
             **kwargs,
         )
 

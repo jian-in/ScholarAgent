@@ -91,6 +91,7 @@ class JobStore:
                 "workflow": None,
                 "source_format": None,
                 "evidence": None,
+                "completion": None,
                 "seconds": None,
                 "elapsed": 0.0,
                 "created_at": now,
@@ -184,6 +185,7 @@ class JobStore:
             job["workflow"] = result.get("workflow")
             job["source_format"] = result.get("source_format")
             job["evidence"] = result.get("evidence")
+            job["completion"] = result.get("completion")
             job["model_routing"] = result.get(
                 "model_routing", job.get("model_routing", "single")
             )
@@ -207,6 +209,7 @@ class JobStore:
                 job["workflow"] = result.get("workflow")
                 job["source_format"] = result.get("source_format")
                 job["evidence"] = result.get("evidence")
+                job["completion"] = result.get("completion")
                 job["model_routing"] = result.get(
                     "model_routing", job.get("model_routing", "single")
                 )
@@ -237,6 +240,7 @@ class JobStore:
                 "workflow": job["workflow"],
                 "source_format": job["source_format"],
                 "evidence": job["evidence"],
+                "completion": job["completion"],
                 "seconds": job["seconds"],
                 "elapsed": elapsed,
                 "cancel_requested": job["cancel_requested"],

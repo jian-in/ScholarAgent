@@ -155,6 +155,7 @@ class SavedCaseStore:
             "cancelled": status == "cancelled",
             "answer": answer,
             "answer_html": render_markdown(answer),
+            "completion": row.get("completion") or {},
             "routing": row.get("routing") or row.get("routing_decision"),
             "metrics": row.get("metrics"),
             "artifacts": row.get("artifacts") or {},

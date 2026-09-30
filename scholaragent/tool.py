@@ -348,6 +348,17 @@ class ToolRegistry:
                 artifacts=tuple(metadata),
                 diagnostic=result.diagnostic,
             )
+        if context is not None and result.artifacts:
+            normalized = []
+            for artifact in result.artifacts:
+                try:
+                    normalized.append(context.evidence.ingest_artifact(artifact))
+                except (TypeError, ValueError):
+                    normalized.append(artifact)
+            result = ToolResult(
+                text=result.text, success=result.success, stop_retry=result.stop_retry,
+                artifacts=tuple(normalized), diagnostic=result.diagnostic,
+            )
         self._record_result(name, arguments, result, context)
         return result
 

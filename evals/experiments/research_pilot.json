@@ -1,0 +1,11 @@
+{
+  "schema_version": "experiment-definition-v1",
+  "id": "research-pilot-v1",
+  "tasks": "../research_tasks.jsonl",
+  "task_ids": ["locate-react", "read-resnet", "gap-future-claim"],
+  "strategy": "fixed",
+  "modes": ["react", "plan", "team"],
+  "team_require_full_paper": false,
+  "config": {"agent_max_steps": 15},
+  "strategy_version": "research-baseline-v1"
+}

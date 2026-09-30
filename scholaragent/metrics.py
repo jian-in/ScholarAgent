@@ -23,6 +23,8 @@ class RunMetrics:
     tool_calls: int = 0
     # 按模型职责保留一份 token 分解，便于核验云端调研与本地总结的成本边界。
     llm_usage_by_role: Mapping[str, Mapping] = field(default_factory=dict)
+    request_attempts: int = 0
+    token_accounting_complete: bool = True
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -39,6 +41,8 @@ class MetricsCollector:
         """从当前时刻开始一段新的、独立的执行观测。"""
         self._started_at = perf_counter()
         self._llm_calls = 0
+        self._request_attempts = 0
+        self._token_accounting_complete = True
         self._prompt_tokens = 0
         self._completion_tokens = 0
         self._missing_prompt_tokens = False
@@ -54,8 +58,14 @@ class MetricsCollector:
         self.mode = mode
 
     def record_llm_call(self, usage: Optional[Mapping] = None, role=None,
-                        provider=None, model=None) -> None:
+                        provider=None, model=None, request_attempts=1) -> None:
         self._llm_calls += 1
+        self._request_attempts += request_attempts
+        if request_attempts != 1 or not usage:
+            self._token_accounting_complete = False
+        # SDK 重试或空响应的 usage 未全部返回：总 token 保持未知。
+        if request_attempts != 1:
+            usage = None
         role_key = str(role or "general")
         bucket = self._llm_usage_by_role.setdefault(role_key, {
             "provider": provider,
@@ -90,12 +100,14 @@ class MetricsCollector:
             bucket["prompt_tokens"] += prompt_tokens
         else:
             self._missing_prompt_tokens = True
+            self._token_accounting_complete = False
             bucket["missing_prompt_tokens"] = True
         if isinstance(completion_tokens, int) and completion_tokens >= 0:
             self._completion_tokens += completion_tokens
             bucket["completion_tokens"] += completion_tokens
         else:
             self._missing_completion_tokens = True
+            self._token_accounting_complete = False
             bucket["missing_completion_tokens"] = True
 
         hit = usage.get("prompt_cache_hit_tokens")
@@ -166,6 +178,8 @@ class MetricsCollector:
             ),
             tool_calls=self._tool_calls if tool_calls is None else tool_calls,
             llm_usage_by_role=usage_by_role,
+            request_attempts=self._request_attempts,
+            token_accounting_complete=self._token_accounting_complete,
         )
 
     def finish(self, tool_calls: Optional[int] = None) -> RunMetrics:

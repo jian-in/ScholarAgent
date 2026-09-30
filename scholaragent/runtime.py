@@ -114,6 +114,7 @@ class RunResult:
     evidence: Mapping[str, Any] = field(default_factory=dict)
     workflow: str | None = None
     source_format: str | None = None
+    completion: Mapping[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         data = asdict(self)
@@ -284,6 +285,16 @@ def execute_runners(task: str, mode: str, runners: Mapping[str, object],
     finally:
         metrics = metrics.finish()
 
+    answer = str(answer or "")
+    issues = context.completion_issues
+    completeness = "partial" if issues or status != "completed" else "complete"
+    if issues and status == "completed" and not answer.startswith("## 阶段结果"):
+        answer = "## 阶段结果（部分完成）\n子步骤存在证据缺口或预算耗尽，以下汇总待核对。\n\n" + answer
+    context.evidence.register_answer(answer)
+    if context.evidence.validate():
+        completeness = "partial"
+        issues = [*issues, {"reason": "evidence_validation_failed", "report": ""}]
+
     return RunResult(
         run_id=context.run_id,
         status=status,
@@ -298,6 +309,11 @@ def execute_runners(task: str, mode: str, runners: Mapping[str, object],
         evidence=context.evidence.to_dict(),
         workflow=selection.name,
         source_format=selection.source_format,
+        completion={
+            "completeness": completeness,
+            "stop_reasons": list(dict.fromkeys(issue["reason"] for issue in issues)),
+            "partial_reports": [issue["report"] for issue in issues if issue["report"]],
+        },
     )
 
 

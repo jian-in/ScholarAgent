@@ -58,6 +58,7 @@ class LLMClient:
         # 延迟创建 SDK 客户端：Windows 首次构造 httpx/SSL 代理上下文可能
         # 很慢，不能让工作台的“提交任务”或后台线程在真正运行前卡住。
         self._client = None
+        self.last_request_attempts = 0
 
     def _client_instance(self):
         if self._client is None:
@@ -86,7 +87,9 @@ class LLMClient:
 
     def _create_completion(self, messages, tools):
         """只发送一次请求;所有重试共用 _request_with_guard 的预算。"""
-        return self._client_instance().chat.completions.create(
+        client = self._client_instance()
+        self.last_request_attempts += 1
+        return client.chat.completions.create(
             model=self.model,
             messages=messages,
             tools=tools if tools else None,
@@ -152,6 +155,7 @@ class LLMClient:
 
     def _request_with_guard(self, messages, tools):
         """网络错误和空 choices 共用一个尝试上限,避免嵌套重试。"""
+        self.last_request_attempts = 0
         for attempt in range(1, self._max_attempts + 1):
             try:
                 response = self._create_completion(messages, tools)
