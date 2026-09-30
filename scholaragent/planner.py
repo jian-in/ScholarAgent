@@ -140,7 +140,7 @@ class Planner:
                             return CANCELLED_ANSWER
                         self._log(f"[反思] 第 {idx} 步未达标,带着建议重试:{advice}")
                         result = self._execute_step(task, steps, results, idx, advice,
-                                                    context=context)
+                                                    context=context, is_retry=True)
                         if result == CANCELLED_ANSWER:
                             return CANCELLED_ANSWER
                 results.append(result)
@@ -176,7 +176,7 @@ class Planner:
         return steps
 
     def _execute_step(self, task, steps, results, idx, advice,
-                      context: RunContext = None) -> str:
+                      context: RunContext = None, is_retry: bool = False) -> str:
         context_lines = [f"总任务:{task}", "完整计划:"]
         context_lines += [f"  {i}. {s}" for i, s in enumerate(steps, 1)]
         if results:
@@ -187,15 +187,24 @@ class Planner:
         if advice:
             context_lines.append(f"(上次执行未达标,改进建议:{advice})")
         prompt = "\n".join(context_lines)
-        if not is_fast_gap_survey_task(task) or not hasattr(self.agent, "max_steps"):
+        # 步数预算:fast_gap 用固定上限;反思重试用减半上限 ——
+        # 一个坏步骤最多吃掉 1.5×max_steps,而不是 2×max_steps 的全量上下文调用。
+        # 两者都不命中时(如普通首次执行)直接跑,不碰 Agent 的原配置。
+        step_cap = None
+        if is_fast_gap_survey_task(task) and hasattr(self.agent, "max_steps"):
+            step_cap = FAST_GAP_MAX_STEPS
+        elif is_retry and hasattr(self.agent, "max_steps"):
+            step_cap = max(1, self.agent.max_steps // 2)
+
+        if step_cap is None:
             if context is None:
                 return self.agent.run(prompt)
             return context.invoke(self.agent, prompt)
 
         original_max_steps = self.agent.max_steps
         original_tools = getattr(self.agent, "tools", None)
-        self.agent.max_steps = min(original_max_steps, FAST_GAP_MAX_STEPS)
-        if hasattr(original_tools, "subset"):
+        self.agent.max_steps = min(original_max_steps, step_cap)
+        if is_fast_gap_survey_task(task) and hasattr(original_tools, "subset"):
             self.agent.tools = original_tools.subset(list(FAST_GAP_TOOL_NAMES))
         try:
             if context is None:
