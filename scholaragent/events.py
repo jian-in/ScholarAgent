@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from .source_policy import SourcePolicy
+
 import inspect
 import threading
 import uuid
@@ -119,7 +121,7 @@ class RunContext:
                  metrics: MetricsCollector | None = None,
                  event_sink: EventSink | Callable[[RunEvent], None] | None = None,
                  should_stop: Callable[[], bool] | None = None,
-                 evidence: EvidenceLedger | None = None):
+                 evidence: EvidenceLedger | None = None, pinned_sources=()):
         self.run_id = run_id or uuid.uuid4().hex
         self.mode = mode
         self.workspace = workspace or default_workspace()
@@ -134,6 +136,7 @@ class RunContext:
         # 否则 Web 的 JobStore 能看到事件，RunResult 却会出现空事件流。
         self._events: list[RunEvent] = []
         self.evidence = evidence or EvidenceLedger()
+        self.source_policy = SourcePolicy(pinned_sources)
         self.token = CancellationToken()
         self._should_stop = should_stop
         self._terminal_event: str | None = None

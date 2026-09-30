@@ -193,7 +193,7 @@ def execute_runners(task: str, mode: str, runners: Mapping[str, object],
                     event_sink=None, on_progress=None,
                     should_stop=None, workflow_registry=None,
                     workflow: str | None = None,
-                    source=None) -> RunResult:
+                    source=None, pinned_sources=()) -> RunResult:
     """执行已组装的 runner，并生成唯一的 ``RunResult``。
 
     Web 的兼容注入和 ``ExecutionRuntime`` 都走这里，因此计时、事件、
@@ -217,6 +217,7 @@ def execute_runners(task: str, mode: str, runners: Mapping[str, object],
         metrics=metrics,
         event_sink=event_sink,
         should_stop=should_stop,
+        pinned_sources=pinned_sources,
     )
     for runner in runners.values():
         if hasattr(runner, "on_progress") and on_progress is not None:
@@ -236,7 +237,8 @@ def execute_runners(task: str, mode: str, runners: Mapping[str, object],
             if should_stop is not None and hasattr(child, "should_stop"):
                 child.should_stop = should_stop
 
-    context.emit("run_started", requested_mode=mode, task_preview=task[:240])
+    context.emit("run_started", requested_mode=mode, task_preview=task[:240],
+                 pinned_sources=list(context.source_policy.pinned))
     context.emit(
         "workflow_selected",
         workflow=selection.name,
@@ -414,7 +416,7 @@ class ExecutionRuntime:
     def run(self, task: str, mode: str = "react", *, run_id: str = None,
             metrics_collector: MetricsCollector = None,
             event_sink=None, on_progress=None, should_stop=None,
-            workflow: str | None = None, source=None) -> RunResult:
+            workflow: str | None = None, source=None, pinned_sources=()) -> RunResult:
         task = str(task or "").strip()
         if not task:
             raise ValueError("任务不能为空。")
@@ -433,6 +435,7 @@ class ExecutionRuntime:
             workflow_registry=self.workflow_registry,
             workflow=workflow,
             source=source,
+            pinned_sources=pinned_sources,
         )
 
 

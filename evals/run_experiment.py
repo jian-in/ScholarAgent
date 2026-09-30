@@ -198,7 +198,8 @@ def execute_experiment(definition: dict, output_dir: str | Path, runtime_factory
             text = task["task"]
             if task.get("sources"):
                 text += "\n固定文献版本：" + ", ".join(task["sources"]) + "。只依据这些版本，重要结论标注来源锚点。"
-            result = runtime.run(text, mode=mode, run_id=run_id)
+            result = runtime.run(text, mode=mode, run_id=run_id,
+                                 pinned_sources=task.get("sources") or ())
             row = _run_row(task, result, run_id, label)
             row["source_snapshots"] = _source_snapshots(result, workspace)
             metadata = runtime.llm.metadata() if hasattr(runtime.llm, "metadata") else {}
@@ -222,7 +223,7 @@ def execute_experiment(definition: dict, output_dir: str | Path, runtime_factory
             "strategy": strategy,
             "modes": labels,
             "declared_model": definition.get("model"),
-            "source_policy": "pinned-arxiv-version-and-observed-pdf-sha256",
+            "source_policy": "enforced-pinned-arxiv-version-and-observed-pdf-sha256",
         },
         modes=[row["mode"] for row in rows],
         strategy_version=definition.get("strategy_version") or "experiment-run-v1",

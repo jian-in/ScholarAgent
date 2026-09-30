@@ -124,6 +124,8 @@ class Agent:
                 task = (f"{task}\n\n(以下是从长期记忆自动检索到的相关内容,"
                         f"仅供参考,以工具实际查到的信息为准:\n{recalled})")
 
+        task += context.source_policy.instruction()
+        task += "\n\n" + context.evidence.source_catalog()
         user_message = {"role": "user", "content": task}
         messages.append(user_message)
 
