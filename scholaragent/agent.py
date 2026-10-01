@@ -10,6 +10,7 @@ max_steps 是保险丝:防止模型陷入"无限调工具"的死循环,
 把 API 费用烧光。这是所有 Agent 框架都有的标配防护。
 """
 
+import json
 from collections.abc import Mapping
 
 from . import config
@@ -51,7 +52,9 @@ class Agent:
     def __init__(self, llm, tools, system_prompt=DEFAULT_SYSTEM_PROMPT,
                  max_steps=10, verbose=True,
                  conversation=None, long_memory=None, auto_recall=False,
-                 tool_call_limits=None, required_tool_completions=None,
+                 tool_call_limits=None, max_tool_calls_per_step=None,
+                 run_char_budget=None,
+                 required_tool_completions=None,
                  min_final_chars=0, metrics_mode="react",
                  on_progress=None, should_stop=None, summary_llm=None):
         self.llm = llm            # 只要求有 chat() 方法,真假模型皆可
@@ -71,6 +74,18 @@ class Agent:
         self.auto_recall = auto_recall    # 任务开始前自动检索长期记忆(RAG)
         # 限制单轮内某个工具的调用次数,防止模型用近义参数反复撞同一服务。
         self.tool_call_limits = dict(tool_call_limits or {})
+        # 单步工具调用上限:一轮内模型返回再多 tool_call,也只执行前 N 个,
+        # 超出的按短路分支回传文字说明(不执行、但不把工具整轮停用)。
+        # None 表示用 config 默认;显式传值可被测试/上层覆盖。
+        self.max_tool_calls_per_step = (
+            config.AGENT_MAX_TOOL_CALLS_PER_STEP
+            if max_tool_calls_per_step is None
+            else max(1, int(max_tool_calls_per_step)))
+        # run 级累计字符预算:单轮内 messages 只追加不裁剪,超限说明
+        # "步数没用完、上下文先失控",走 _closeout 部分报告通道收尾。
+        self.run_char_budget = (
+            config.AGENT_RUN_CHAR_BUDGET
+            if run_char_budget is None else max(1, int(run_char_budget)))
         # 某些长流程不能相信模型口头宣称完成，必须由工具状态确认。
         self.required_tool_completions = tuple(required_tool_completions or ())
         self.min_final_chars = max(0, int(min_final_chars))
@@ -146,6 +161,14 @@ class Agent:
                 answer = self._closeout(messages, context, request_summary=model_calls < self.max_steps)
                 finished = True
                 break
+            # run 级字符预算:messages 在单轮内只追加不裁剪,累计字符超限
+            # 说明"步数没用完、上下文先失控",走部分报告通道干净收尾,
+            # 而不是继续请求把费用烧光。
+            if self._context_char_total(messages) >= self.run_char_budget:
+                self._log(f"[预算] 单轮累计字符超限({self.run_char_budget}),收尾输出部分报告")
+                answer = self._closeout(messages, context, request_summary=model_calls < self.max_steps)
+                finished = True
+                break
             # ① 思考:把完整对话历史 + 工具清单交给模型。
             # 历史中每条消息在创建时即已裁剪定稿(见 _finalize_observation),
             # 此处不再改写 —— 请求前缀逐字节稳定,模型前缀缓存全程有效。
@@ -157,6 +180,11 @@ class Agent:
                     self.llm, messages, tools=self.tools.schemas(), step=step,
                 )
             except Exception:
+                # 刻意设计:首次模型调用即失败时,还没有任何工具证据可报告,
+                # 部分报告是空的,不如把原始异常直接抛给 runtime 层 ——
+                # runtime.execute_runners 会捕获并记为 failed(见 runtime.py),
+                # CLI/Web 由此给出明确失败而不是一张空白的部分报告。
+                # 有证据之后的失败才走下面的 _partial_report 通道。
                 if not self._observations:
                     raise
                 answer = self._partial_report("model_error")
@@ -247,6 +275,7 @@ class Agent:
             had_tool_evidence = True
             if reply["content"]:
                 self._log(f"[第 {step} 步] 模型想法:{reply['content']}")
+            step_calls_left = self.max_tool_calls_per_step
             for tc in reply["tool_calls"]:
                 if self._stop_requested():
                     self._log("[取消] 用户已请求停止,跳过剩余工具调用")
@@ -256,7 +285,26 @@ class Agent:
                 tool_name = tc["name"]
                 limit = self.tool_call_limits.get(tool_name)
                 used = tool_call_counts.get(tool_name, 0)
-                if tool_name in disabled_tools:
+                if step_calls_left <= 0:
+                    # 单步调用上限:超出的调用不执行,按短路分支回传文字说明。
+                    # 语义与"停用/超限"短路一致(错误回传而非崩溃),但 stop_retry
+                    # 为 False —— 只是本步预算用完,工具本身并未被整轮停用,
+                    # 下一步模型仍可正常调用,防止一轮几十个 tool_call
+                    # 把"步数预算"的语义掏空。
+                    self._log(f"[第 {step} 步] 单步工具调用已达上限"
+                              f" {self.max_tool_calls_per_step},跳过 {tool_name}")
+                    tool_result = ToolResult(
+                        text=(f"{STOP_RETRY_PREFIX} 本步已执行"
+                              f" {self.max_tool_calls_per_step} 次工具调用,达到单步上限,"
+                              "本次调用未执行。请根据已有结果继续推进,"
+                              "不要重复请求被跳过的调用。"),
+                        success=False,
+                        stop_retry=False,
+                        diagnostic={"kind": "step_call_limit",
+                                    "limit": self.max_tool_calls_per_step},
+                    )
+                    result = tool_result.text
+                elif tool_name in disabled_tools:
                     tool_result = ToolResult(
                         # 保留旧前缀只是模型可见的兼容文案；是否停用由
                         # ``stop_retry`` 字段决定，不能从文案反推控制流。
@@ -350,6 +398,7 @@ class Agent:
                     "tool_call_id": tc["id"],
                     "content": self._finalize_observation(result),
                 })
+                step_calls_left -= 1
             if answer == CANCELLED_ANSWER:
                 break
 
@@ -447,6 +496,11 @@ class Agent:
         self._log(f"[上下文] 工具结果已定稿裁剪"
                   f"(约省 {len(content) - len(finalized)} 字符)")
         return finalized
+
+    @staticmethod
+    def _context_char_total(messages) -> int:
+        """计入完整消息载荷，包含工具参数和多模态内容；不是 token 估算。"""
+        return len(json.dumps(messages, ensure_ascii=False, default=str))
 
     def _stop_requested(self) -> bool:
         if self._active_context is not None:
