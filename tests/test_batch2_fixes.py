@@ -94,6 +94,29 @@ def test_circuit_breaker_resets_streak_on_success():
     assert not any("已停用" in o["content"] for o in observations)
 
 
+def test_source_policy_short_circuits_do_not_trip_execution_breaker():
+    class ReadTool(Tool):
+        name = "read_paper"
+        calls = 0
+
+        def run(self, arxiv_id):
+            self.calls += 1
+            return "body"
+
+    tool = ReadTool()
+    replies = _tool_call_replies("read_paper", 3, {"arxiv_id": "2210.03629v3"})
+    replies += _tool_call_replies("read_paper", 1, {"arxiv_id": "2210.03629v1"})
+    llm = ScriptedLLM(replies + [{"content": "done", "tool_calls": []}])
+    ctx = RunContext(mode="react", pinned_sources=["2210.03629v1"])
+    agent = Agent(llm, ToolRegistry([tool]), verbose=False)
+    agent.run("read pinned paper", context=ctx)
+    assert tool.calls == 1
+    completed = [e for e in ctx.event_list if e.type == "tool_completed"]
+    assert len(completed) == 4
+    assert [e.payload["executed"] for e in completed] == [False, False, False, True]
+    assert completed[-1].payload["success"] is True
+
+
 def test_circuit_breaker_threshold_is_configurable(monkeypatch):
     monkeypatch.setattr(config, "TOOL_CONSECUTIVE_FAILURE_LIMIT", 2)
     tool = FlakyTool()

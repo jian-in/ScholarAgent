@@ -312,6 +312,7 @@ class Agent:
                                 stop_retry=tool_result.stop_retry,
                                 observation_preview=tool_result.text[:240],
                                 diagnostic=tool_result.diagnostic,
+                                executed=tool_result.executed,
                             )
                     else:
                         tool_result = self.tools.call_result(
@@ -321,7 +322,9 @@ class Agent:
                         disabled_tools.add(tool_name)
                     # P1-4 连续失败熔断:只统计真实执行的结果,短路分支不算。
                     # 达到阈值就本轮停用,复用已有的停用文字回传机制。
-                    if tool_result.success:
+                    if not tool_result.executed:
+                        pass  # 未执行的来源校验等短路，不改变真实执行的失败 streak。
+                    elif tool_result.success:
                         tool_failure_streaks.pop(tool_name, None)
                     else:
                         streak = tool_failure_streaks.get(tool_name, 0) + 1

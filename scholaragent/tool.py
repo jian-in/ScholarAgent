@@ -105,6 +105,8 @@ class ToolResult:
     stop_retry: bool = False
     artifacts: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
     diagnostic: Mapping[str, Any] | None = None
+    # 区分真正执行与登记处短路，熔断只统计前者；旧工具默认已执行。
+    executed: bool = True
 
     def to_dict(self) -> dict:
         data = asdict(self)
@@ -126,6 +128,7 @@ def adapt_tool_result(value: Any) -> ToolResult:
             stop_retry=bool(value.get("stop_retry", False)),
             artifacts=tuple(artifacts),
             diagnostic=value.get("diagnostic"),
+            executed=bool(value.get("executed", True)),
         )
 
     text = str(value or "")
@@ -341,6 +344,7 @@ class ToolRegistry:
                     "kind": "timeout" if isinstance(exc, _ToolCallTimeout) else exc.kind,
                     "message": str(exc),
                 },
+                executed=isinstance(exc, _ToolCallTimeout),
             )
         except Exception as exc:  # 故意兜住一切异常,转成文字回传给模型
             result = ToolResult(
@@ -365,6 +369,7 @@ class ToolRegistry:
                 stop_retry=result.stop_retry,
                 artifacts=tuple(metadata),
                 diagnostic=result.diagnostic,
+                executed=result.executed,
             )
         if context is not None and result.artifacts:
             normalized = []
@@ -376,6 +381,7 @@ class ToolRegistry:
             result = ToolResult(
                 text=result.text, success=result.success, stop_retry=result.stop_retry,
                 artifacts=tuple(normalized), diagnostic=result.diagnostic,
+                executed=result.executed,
             )
         self._record_result(name, arguments, result, context)
         return result
@@ -391,7 +397,8 @@ class ToolRegistry:
         """
         self._run_tool_calls += 1
         result = ToolResult(
-            text=text, success=False, stop_retry=stop_retry, diagnostic=diagnostic)
+            text=text, success=False, stop_retry=stop_retry,
+            diagnostic=diagnostic, executed=False)
         if context is not None:
             context.emit("tool_started", name=name, arguments=arguments)
             context.metrics.record_tool_call()
@@ -408,6 +415,7 @@ class ToolRegistry:
                 stop_retry=result.stop_retry,
                 observation_preview=result.text[:240],
                 diagnostic=result.diagnostic,
+                executed=result.executed,
             )
             for artifact in result.artifacts:
                 try:
