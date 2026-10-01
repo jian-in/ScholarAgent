@@ -10,6 +10,7 @@ max_steps 是保险丝:防止模型陷入"无限调工具"的死循环,
 把 API 费用烧光。这是所有 Agent 框架都有的标配防护。
 """
 
+import json
 from collections.abc import Mapping
 
 from . import config
@@ -498,15 +499,8 @@ class Agent:
 
     @staticmethod
     def _context_char_total(messages) -> int:
-        """单轮内 messages 的累计字符数(只追加不裁剪,用于 run 级预算)。"""
-        total = 0
-        for message in messages:
-            content = message.get("content")
-            if isinstance(content, str):
-                total += len(content)
-            elif content is not None:
-                total += len(str(content))
-        return total
+        """计入完整消息载荷，包含工具参数和多模态内容；不是 token 估算。"""
+        return len(json.dumps(messages, ensure_ascii=False, default=str))
 
     def _stop_requested(self) -> bool:
         if self._active_context is not None:

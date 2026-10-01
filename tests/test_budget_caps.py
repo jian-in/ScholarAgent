@@ -75,6 +75,26 @@ class BudgetCapsTests(unittest.TestCase):
         executed = [m["content"] for m in tool_messages[:2]]
         self.assertEqual(executed, ["echo:t0", "echo:t1"])
 
+    def test_tool_arguments_count_toward_run_char_budget(self):
+        class SinkTool(EchoTool):
+            def run(self, text=""):
+                self.calls += 1
+                return "stored"
+
+        tool = SinkTool()
+        llm = ScriptedLLM([
+            {"content": None, "tool_calls": [
+                {"id": "large", "name": "echo",
+                 "arguments": {"text": "x" * 10000}}]},
+            {"content": "收尾摘要", "tool_calls": []},
+        ])
+        agent = Agent(llm, ToolRegistry([tool]), verbose=False,
+                      system_prompt="s", run_char_budget=1000)
+        answer = agent.run("budget")
+        self.assertEqual(tool.calls, 1)
+        self.assertIn("budget_exhausted", answer)
+        self.assertEqual(agent.last_completion["reason"], "budget_exhausted")
+
     def test_run_char_budget_triggers_closeout(self):
         tool = EchoTool()
         registry = ToolRegistry([tool])
