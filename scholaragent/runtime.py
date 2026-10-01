@@ -193,7 +193,8 @@ def execute_runners(task: str, mode: str, runners: Mapping[str, object],
                     event_sink=None, on_progress=None,
                     should_stop=None, workflow_registry=None,
                     workflow: str | None = None,
-                    source=None, pinned_sources=()) -> RunResult:
+                    source=None, pinned_sources=(),
+                    soft_timeout_seconds: float | None = None) -> RunResult:
     """执行已组装的 runner，并生成唯一的 ``RunResult``。
 
     Web 的兼容注入和 ``ExecutionRuntime`` 都走这里，因此计时、事件、
@@ -218,6 +219,7 @@ def execute_runners(task: str, mode: str, runners: Mapping[str, object],
         event_sink=event_sink,
         should_stop=should_stop,
         pinned_sources=pinned_sources,
+        soft_timeout_seconds=soft_timeout_seconds,
     )
     for runner in runners.values():
         if hasattr(runner, "on_progress") and on_progress is not None:
@@ -416,7 +418,8 @@ class ExecutionRuntime:
     def run(self, task: str, mode: str = "react", *, run_id: str = None,
             metrics_collector: MetricsCollector = None,
             event_sink=None, on_progress=None, should_stop=None,
-            workflow: str | None = None, source=None, pinned_sources=()) -> RunResult:
+            workflow: str | None = None, source=None, pinned_sources=(),
+            soft_timeout_seconds: float | None = None) -> RunResult:
         task = str(task or "").strip()
         if not task:
             raise ValueError("任务不能为空。")
@@ -436,6 +439,7 @@ class ExecutionRuntime:
             workflow=workflow,
             source=source,
             pinned_sources=pinned_sources,
+            soft_timeout_seconds=soft_timeout_seconds,
         )
 
 

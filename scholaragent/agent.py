@@ -16,7 +16,7 @@ from collections.abc import Mapping
 from . import config
 from .events import RunContext
 from .llm import assistant_message
-from .tool import STOP_RETRY_PREFIX, ToolRegistry, ToolResult, adapt_tool_result
+from .tool import STOP_RETRY_PREFIX, ToolRegistry, adapt_tool_result
 
 DEFAULT_SYSTEM_PROMPT = (
     "你是一个严谨的智能助手。遇到需要计算、查询等无法凭空回答的问题时,"
@@ -147,6 +147,8 @@ class Agent:
         answer = f"(已达到最大步数 {self.max_steps},任务中止。可以换个问法或调大 max_steps)"
         disabled_tools = set()
         tool_call_counts = {}
+        # P1-4 熔断:同工具连续失败计数,成功一次即清零
+        tool_failure_streaks = {}
         remembered_arguments = {}
         had_tool_evidence = False
         summary_handed_off = False
@@ -293,43 +295,43 @@ class Agent:
                     # 把"步数预算"的语义掏空。
                     self._log(f"[第 {step} 步] 单步工具调用已达上限"
                               f" {self.max_tool_calls_per_step},跳过 {tool_name}")
-                    tool_result = ToolResult(
+                    tool_result = self.tools.short_circuit(
+                        tool_name, tc.get("arguments") or {}, context,
                         text=(f"{STOP_RETRY_PREFIX} 本步已执行"
                               f" {self.max_tool_calls_per_step} 次工具调用,达到单步上限,"
                               "本次调用未执行。请根据已有结果继续推进,"
                               "不要重复请求被跳过的调用。"),
-                        success=False,
                         stop_retry=False,
                         diagnostic={"kind": "step_call_limit",
                                     "limit": self.max_tool_calls_per_step},
                     )
                     result = tool_result.text
                 elif tool_name in disabled_tools:
-                    tool_result = ToolResult(
+                    tool_result = self.tools.short_circuit(
+                        tool_name, tc.get("arguments") or {}, context,
                         # 保留旧前缀只是模型可见的兼容文案；是否停用由
                         # ``stop_retry`` 字段决定，不能从文案反推控制流。
                         text=(f"{STOP_RETRY_PREFIX} 工具 {tool_name} 在本轮已停用。"
                               "请根据已有信息作答并说明资料缺口。"),
-                        success=False,
-                        stop_retry=True,
                         diagnostic={"kind": "tool_disabled"},
+                        stop_retry=True,
                     )
                     result = tool_result.text
                 elif limit is not None and used >= limit:
                     disabled_tools.add(tool_name)
-                    tool_result = ToolResult(
+                    tool_result = self.tools.short_circuit(
+                        tool_name, tc.get("arguments") or {}, context,
                         text=(f"{STOP_RETRY_PREFIX} 工具 {tool_name} 已达到本轮调用上限 {limit} 次。"
                               "请根据已有信息作答并说明资料缺口。"),
-                        success=False,
-                        stop_retry=True,
                         diagnostic={"kind": "tool_call_limit", "limit": limit},
+                        stop_retry=True,
                     )
                     result = tool_result.text
                 elif tc.get("error"):
                     # 参数在模型层就没解析成功,直接把错误当结果回传给模型
-                    tool_result = ToolResult(
+                    tool_result = self.tools.short_circuit(
+                        tool_name, tc.get("arguments") or {}, context,
                         text=tc["error"],
-                        success=False,
                         diagnostic={"kind": "invalid_arguments"},
                     )
                     result = tc["error"]
@@ -357,6 +359,7 @@ class Agent:
                                 stop_retry=tool_result.stop_retry,
                                 observation_preview=tool_result.text[:240],
                                 diagnostic=tool_result.diagnostic,
+                                executed=tool_result.executed,
                             )
                     else:
                         tool_result = self.tools.call_result(
@@ -364,6 +367,20 @@ class Agent:
                     result = tool_result.text
                     if tool_result.stop_retry:
                         disabled_tools.add(tool_name)
+                    # P1-4 连续失败熔断:只统计真实执行的结果,短路分支不算。
+                    # 达到阈值就本轮停用,复用已有的停用文字回传机制。
+                    if not tool_result.executed:
+                        pass  # 未执行的来源校验等短路，不改变真实执行的失败 streak。
+                    elif tool_result.success:
+                        tool_failure_streaks.pop(tool_name, None)
+                    else:
+                        streak = tool_failure_streaks.get(tool_name, 0) + 1
+                        tool_failure_streaks[tool_name] = streak
+                        fuse_limit = config.TOOL_CONSECUTIVE_FAILURE_LIMIT
+                        if streak >= fuse_limit and tool_name not in disabled_tools:
+                            disabled_tools.add(tool_name)
+                            self._log(f"[熔断] 工具 {tool_name} 连续失败 {streak} 次,"
+                                      f"达到阈值 {fuse_limit},本轮停用")
                 self._log(f"[第 {step} 步] 工具返回:{result}")
                 self._observations.append({
                     "name": tool_name, "success": tool_result.success,

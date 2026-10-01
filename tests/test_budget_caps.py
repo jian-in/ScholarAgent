@@ -63,7 +63,9 @@ class BudgetCapsTests(unittest.TestCase):
         self.assertEqual(answer, "done")
         # 第一步只执行 2 个,第二步的 1 个正常执行(工具没有被整轮停用)
         self.assertEqual(tool.calls, 3)
-        self.assertEqual(registry.run_tool_calls, 3)
+        # 真实执行 3 次，其余 4 次短路也进入统一调用账本和事件通道。
+        self.assertEqual(registry.run_tool_calls, 7)
+        self.assertEqual(agent.last_metrics.tool_calls, 7)
         tool_messages = [m for m in llm.last_messages
                          if m.get("role") == "tool"]
         self.assertEqual(len(tool_messages), 7)

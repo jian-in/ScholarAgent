@@ -112,6 +112,8 @@ class ToolResult:
     stop_retry: bool = False
     artifacts: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
     diagnostic: Mapping[str, Any] | None = None
+    # 区分真正执行与登记处短路，熔断只统计前者；旧工具默认已执行。
+    executed: bool = True
 
     def to_dict(self) -> dict:
         data = asdict(self)
@@ -133,6 +135,7 @@ def adapt_tool_result(value: Any) -> ToolResult:
             stop_retry=bool(value.get("stop_retry", False)),
             artifacts=tuple(artifacts),
             diagnostic=value.get("diagnostic"),
+            executed=bool(value.get("executed", True)),
         )
 
     text = str(value or "")
@@ -306,16 +309,13 @@ class ToolRegistry:
         模型看到错误信息后,往往能自己修正参数重试 ——
         这是 Agent 具备"纠错能力"的来源之一。
         """
-        self._run_tool_calls += 1
         tool = self._tools.get(name)
         if tool is None:
-            result = ToolResult(
+            return self.short_circuit(
+                name, arguments, context,
                 text=f"错误:不存在名为 {name} 的工具。可用工具:{', '.join(self._tools)}",
-                success=False,
                 diagnostic={"kind": "unknown_tool", "name": name},
             )
-            self._record_result(name, arguments, result, context)
-            return result
         mismatch = None
         if context is not None and name in {"download_paper", "read_paper"}:
             try:
@@ -328,12 +328,16 @@ class ToolRegistry:
                     diagnostic={"kind": exc.kind, "requested": exc.requested,
                                 "pinned_sources": list(exc.pinned)},
                 )
+        if mismatch is not None:
+            return self.short_circuit(
+                name, arguments, context,
+                text=mismatch.text,
+                diagnostic=mismatch.diagnostic,
+            )
+        self._run_tool_calls += 1
         if context is not None:
             context.emit("tool_started", name=name, arguments=arguments)
             context.metrics.record_tool_call()
-        if mismatch is not None:
-            self._record_result(name, arguments, mismatch, context)
-            return mismatch
         completed = False
         try:
             result = adapt_tool_result(self._run_with_timeout(tool, arguments))
@@ -347,6 +351,7 @@ class ToolRegistry:
                     "kind": "timeout" if isinstance(exc, _ToolCallTimeout) else exc.kind,
                     "message": str(exc),
                 },
+                executed=isinstance(exc, _ToolCallTimeout),
             )
         except Exception as exc:  # 故意兜住一切异常,转成文字回传给模型
             result = ToolResult(
@@ -371,6 +376,7 @@ class ToolRegistry:
                 stop_retry=result.stop_retry,
                 artifacts=tuple(metadata),
                 diagnostic=result.diagnostic,
+                executed=result.executed,
             )
         if context is not None and result.artifacts:
             normalized = []
@@ -382,7 +388,27 @@ class ToolRegistry:
             result = ToolResult(
                 text=result.text, success=result.success, stop_retry=result.stop_retry,
                 artifacts=tuple(normalized), diagnostic=result.diagnostic,
+                executed=result.executed,
             )
+        self._record_result(name, arguments, result, context)
+        return result
+
+    def short_circuit(self, name: str, arguments: dict, context,
+                        text: str, diagnostic: Mapping[str, Any] | None = None,
+                        stop_retry: bool = False) -> ToolResult:
+        """短路通道:停用/超限/参数非法/未知工具统一走这里,不实际执行工具。
+
+        与真实执行同增同减:调用计数、tool_started/tool_completed 事件、
+        metrics 记账一个不少。保证"模型发起一次调用,账本就记一次",
+        不再漏记短路分支(P2-1)。
+        """
+        self._run_tool_calls += 1
+        result = ToolResult(
+            text=text, success=False, stop_retry=stop_retry,
+            diagnostic=diagnostic, executed=False)
+        if context is not None:
+            context.emit("tool_started", name=name, arguments=arguments)
+            context.metrics.record_tool_call()
         self._record_result(name, arguments, result, context)
         return result
 
@@ -396,6 +422,7 @@ class ToolRegistry:
                 stop_retry=result.stop_retry,
                 observation_preview=result.text[:240],
                 diagnostic=result.diagnostic,
+                executed=result.executed,
             )
             for artifact in result.artifacts:
                 try:

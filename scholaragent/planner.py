@@ -96,6 +96,8 @@ class Planner:
         self.verbose = verbose
         self.on_progress = on_progress
         self.should_stop = should_stop
+        # P2-8:反思解析连续失败计数,成功解析一次即清零,每轮 run() 开始重置
+        self._reflect_parse_failures = 0
         # 内层 Agent 与规划层共用同一进度/停止通道
         if on_progress is not None and getattr(agent, "on_progress", None) is None:
             agent.on_progress = on_progress
@@ -111,6 +113,7 @@ class Planner:
         context = context or RunContext(mode="plan", should_stop=self.should_stop)
         self._active_context = context
         self._context_external = not owns_context
+        self._reflect_parse_failures = 0
         try:
             if self._stop_requested():
                 self._log("[取消] 用户已请求停止")
@@ -229,15 +232,33 @@ class Planner:
         # 先截取第一个 { 到最后一个 } 再解析,否则反思环节会被静默禁用
         start, end = text.find("{"), text.rfind("}")
         if start == -1 or end <= start:
-            return True, ""  # 完全不含 JSON,放行不阻塞主流程
+            return self._reflect_parse_failed(context, "反思输出不含 JSON")
         try:
             verdict = json.loads(text[start:end + 1])
         except json.JSONDecodeError:
-            return True, ""
+            return self._reflect_parse_failed(context, "反思输出 JSON 解析失败")
         if not isinstance(verdict, dict) or "ok" not in verdict:
             # 没有明确的 ok 字段就不采信"未达标",避免带着空建议白白重试
-            return True, ""
+            return self._reflect_parse_failed(context, "反思输出缺少 ok 字段")
+        self._reflect_parse_failures = 0
         return bool(verdict["ok"]), str(verdict.get("advice", ""))
+
+    def _reflect_parse_failed(self, context, reason: str):
+        """反思解析失败:P2-8 不再静默放行。
+
+        第一次放行不阻塞主流程;连续第二次记入 completion_issues
+        (每个连续失败 streak 只记一次),质检降级有据可查。
+        """
+        self._reflect_parse_failures += 1
+        streak = self._reflect_parse_failures
+        self._log(f"[反思] 解析失败({reason}),连续 {streak} 次,本次放行")
+        if streak == 2 and context is not None:
+            context.mark_partial(
+                "reflect_parse_failed",
+                f"反思质检连续 {streak} 次解析失败({reason}),"
+                "质检环节已降级为放行,相关步骤结论未经模型质检。",
+            )
+        return True, ""
 
     def _synthesize(self, task, steps, results, context: RunContext = None) -> str:
         lines = [f"任务:{task}", "各步骤执行结果:"]
