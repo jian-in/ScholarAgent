@@ -1,98 +1,78 @@
-# 阶段结果、原文证据链与真实任务验证
+# 真实任务实验
 
-本轮改动补工程与证据入口，不声明科研质量或成本已经优于任何基线。真实模型实验与人工评分尚未执行。
+离线测试用的是假模型，只能证明“模型这样回复时，程序这样处理”。这份文档说明怎么用真实模型、
+真实论文把三种模式跑一遍，以及系统在跑到一半出问题时会怎么处理。
 
-## 1. 预算与停止语义
+## 跑不完时会怎样
 
-- Agent 的 `max_steps` 包含总结调用。最后一轮只整理已有材料，不再执行工具。
-- 收尾模型失败、返回空内容或继续请求工具时，直接用已有工具结果生成阶段报告，不追加新模型请求。
-- 报告包含已获得材料、工具失败、必要阅读流程尚未完成的情况，以及停止原因。
-- `RunResult.status` 仍表示 `completed / failed / cancelled` 的执行终态；`completion.completeness` 单独表示 `complete / partial`。
-- Plan 或 Team 子步骤出现部分结果时，最终汇总也保留部分完成说明。当前采用保守聚合：后续摘要不会自动抹掉前序缺口。
-- 取消返回明确停止信号，取消前的阶段报告保存在 `completion.partial_reports`，工作台可展开查看。
-- `llm_calls` 统计逻辑模型调用（含失败），`request_attempts` 统计真实 SDK 请求尝试。SDK 内部重试保持关闭。
-- 一次调用经过重试、空响应或失败，且各次 usage 未完整返回时，总 token 为未知，不把最后一次响应的 token 当作总成本。
+- `max_steps` 包含最后一步总结。步数快用完时，Agent 不再调用工具，只整理已有材料。
+- 总结失败、返回空内容，或者模型还想继续调用工具时，系统直接用已有的工具结果生成一份“阶段报告”，
+  不再额外请求模型。报告里写清楚拿到了什么、哪里失败了、为什么停下。
+- 运行结果分两层：`status` 表示有没有跑完（`completed / failed / cancelled`），
+  `completion.completeness` 表示答案完不完整（`complete / partial`）。
+  Plan、Team 的某个子步骤只拿到部分结果时，最终结果也会标成“部分完成”，不会被后面的总结盖掉。
+- 用户取消时，取消前的阶段报告保存在 `completion.partial_reports`，工作台里可以展开查看。
+- `llm_calls` 是模型调用次数（含失败），`request_attempts` 是实际发出的请求次数（含重试）。
+  某次调用重试过、且服务没返回完整用量时，token 总数记为未知，不拿最后一次的数字充数。
 
-验收：短预算、收尾失败和取消都有结果或停止说明；执行加收尾不超过步数预算；异常后上下文恢复；唯一终态事件保留。
+## 结论怎么对到原文
 
-## 2. 结论到来源
-
-工具产物中的来源锚点进入运行级账本，ID 冲突时重新分配；返回模型的工具观察会附带实际运行级 ID。
-模型最终回答应在每条重要结论的同一行标注引用，例如：
+工具读到的内容会生成来源编号（如 `S001`），模型在最终回答里每条重要结论后面标上编号：
 
 ```text
 该机制交织推理与行动。[S001]
 ```
 
-最终回答按行登记候选结论。引用到已存在锚点的结论仍为 `partial + unreviewed`，不是自动认证。
-没有引用的行记录为 `not_assessable`；未知引用记录为 `unsupported` 并触发结构校验错误。代码块不当作事实结论登记。
+系统逐行登记这些结论：
+- 引用了存在的编号：记为“有引用、待人工确认”。程序只检查编号对得上，不判断原文是否真的支持这句话。
+- 没有引用：记为“无法判断”。
+- 引用了不存在的编号：记为“引用错误”，这次运行会被标成证据校验未通过。
+- 用 `原文：“...”` 格式直接摘录时，程序会检查这段话是否真的出现在读到的原文里。
 
-可选的直接摘录使用 `原文：“...”` 格式；程序检查其是否出现在已记录的锚点摘录中。锚点只保留有限长度的原文片段，
-截取范围外的引文需要补充来源，结构通过与语义判断须分开。
+工作台可以展开每条结论，查看来源、页码和摘录。只有人工在工作台里确认过，结论才会变成“已核验”；
+模型自己的输出永远不会被自动标成已核验。
 
-工作台可以展开每条候选结论，查看来源、页码、摘录和人工核验状态。`verified / rejected` 必须通过人工核验入口登记核验者与说明。
-当前候选提取是确定性的逐行登记，不声称已经具备完整的语义主张识别；人工需检查遗漏、引用范围与原文支持程度。
+## 实验怎么跑
 
-验收：来源可定位，缺失引用与不匹配摘录可见；模型产物不自动变成 `verified`；多工具与多子步骤不会因重置编号串用来源。
+任务在 `evals/research_tasks.jsonl`，共 12 道，分四类，每类 3 道：定位论文、精读、比较、找证据缺口。
+题目都围绕 ReAct 和 ResNet 两篇论文的固定版本（`2210.03629v1`、`1512.03385v1`）。每道题分别用
+ReAct、Plan、Team 三种模式各跑一次，每次运行使用独立的工作区。
 
-## 3. 固定真实任务集与试跑
-
-`evals/research_tasks.jsonl` 包含 12 题：定位、精读、比较、证据缺口四类各 3 题。
-先用已有 ReAct 与 ResNet 案例的两个固定 arXiv v1 版本校验流程；这不是跨学科泛化评测。
-3 题为 pilot，9 题为 holdout；不要使用 holdout 调整规则后再宣称其为留出结果。
-
-实验设置：ReAct/Plan/Team 三模式，独立工作区，关闭会话继承和自动长期记忆召回。
-ReAct 与 Plan worker 的上限设为 15；Team 保留不同角色的原有预算，实际预算写入每条运行记录。
-因此本轮是执行方式及其默认预算的比较，不是严格等调用预算实验。`team_require_full_paper=false` 避免定位题强制读取整篇论文；
-需要精读的题仍在任务要求和人工验收项中明确约束。
-
-先做不联网的清单检查：
+先不联网检查清单：
 
 ```powershell
-.venv/Scripts/python.exe evals/run_experiment.py --manifest evals/experiments/research_pilot.json --output evals/results/research-pilot-v1 --dry-run
 .venv/Scripts/python.exe evals/run_experiment.py --manifest evals/experiments/research_full.json --output evals/results/research-full-v1 --dry-run
 ```
 
-分别应显示 3 题 / 9 次运行，以及 12 题 / 36 次运行。dry-run 不创建工作区，也不连接模型。
-确认模型、额度与文献网络访问后，移除 `--dry-run` 才执行真实实验。清单可设置 `model`；未设置时使用执行环境模型，并记录实际模型名称。
-固定版本写入各模式的实际任务文本，下载到的 PDF 记录 SHA-256；材料不一致或未取得全文的情况保留在报告中。
-材料审计逐运行核对每篇指定文献，分别列出缺失、版本偏差和额外材料；已有 PDF 的哈希一致性单独记录，不代表资料齐全。
-实验入口还把任务的 `sources` 传给运行级策略，ReAct、Plan、Team 共享约束。
-`download_paper` / `read_paper` 在执行前检查来源：省略版本且唯一匹配时补齐固定版本，
-显式版本不匹配或文献不在清单中时返回失败诊断，不执行下载或读取；多个固定版本时要求显式指定。
-普通调用可使用 `runtime.run(task, mode="team", pinned_sources=["2210.03629v1"])`；
-未传 `pinned_sources` 时保持原有开放调研行为。任务文本中的版本号不自动解析成工具约束。
-arXiv / OpenAlex 检索结果登记 `metadata` 锚点，保留真实检索版本，不伪装成固定版本正文。
-角色交接另外传递运行账本的来源目录，精读员保留原始任务；目录与书面报告独立，避免报告遗漏 ID。
-来源目录有大小限制，省略条目时明确标注；模型仍可能输出错误 ID，原有证据验证会保留错误并标为部分完成，不静默替换引用。
-这批记录依旧只是小样本诊断，正式比较需重复运行并核对材料一致性。
+应显示 12 道题 / 36 次运行。去掉 `--dry-run` 就会真正开始跑，需要先在 `.env` 里配置好模型。
+`research_pilot.json` 是只有 3 道题的试跑版本，适合先确认流程能跑通。
 
-## 4. 离线盲评与派生报告
+几点说明：
+- 任务指定了论文版本，下载和阅读工具会强制使用这个版本；版本不对或者不在清单里的论文会被拒绝。
+  普通调用也可以这样用：`runtime.run(task, mode="team", pinned_sources=["2210.03629v1"])`。
+- 下载到的 PDF 会记录 SHA-256，方便核对每次运行读的是不是同一份材料。
+- ReAct 和 Plan 每步最多 15 次，Team 的三个角色沿用各自默认的步数上限，实际数值写在每条运行记录里。
+- 结果是一个模型、每道题跑一次，适合用来发现问题、粗略比较，不能当作“哪种模式更好”的定论。
 
-从实验 `runs.jsonl` 创建独立的评分材料：
+## 看结果
+
+跑完后生成执行报告，内容包括完成情况、停止原因、耗时、调用次数、token、缓存命中率和花费：
 
 ```powershell
-.venv/Scripts/python.exe evals/review_results.py prepare --runs evals/results/research-pilot-v1/runs.jsonl --output evals/results/research-pilot-review-v1
+.venv/Scripts/python.exe evals/summarize_runs.py --runs evals/results/research-full-v1/runs.jsonl
 ```
 
-- `review_packets.jsonl`：隐藏模式、运行 ID、成本和轨迹，保留任务、验收项、原回答及原文锚点。
-- `scores.blind.template.jsonl`：任务完成、事实正确、引用支持、输出完整四项空白评分。
-- `claims.blind.template.jsonl`：逐条原文核验模板。
-- `key.private.json`：维护者保留的映射与原始记录哈希，不给评分者。
+花费优先使用服务返回的实际金额（`usage.cost`）。服务没有返回时，可以用 `--price-in` / `--price-out`
+（美元/百万 token）按单价估算，报告会标明“估算”。
 
-原回答的措辞可能透露角色分工，因此这是隐藏模式元数据的单盲材料，不宣称双盲。
-评分者另存已完成条目为 `scores.blind.jsonl`、`claims.blind.jsonl`。未核对的条目留空并从提交文件中省略；
-每条提交均需真实核验者与说明。评分值应为 `[0,1]` 的有限数值；作者评分与独立评分必须如实区分。
+## 给回答打分（可选）
+
+想给回答质量打分时，可以生成隐藏了模式名称的评分材料，避免打分时先入为主：
 
 ```powershell
-.venv/Scripts/python.exe evals/review_results.py report --runs evals/results/research-pilot-v1/runs.jsonl --key evals/results/research-pilot-review-v1/key.private.json --scores evals/results/research-pilot-review-v1/scores.blind.jsonl --claims evals/results/research-pilot-review-v1/claims.blind.jsonl --output evals/results/research-pilot-report-v1
+.venv/Scripts/python.exe evals/review_results.py prepare --runs evals/results/research-full-v1/runs.jsonl --output evals/results/research-full-review-v1
 ```
 
-输出 `reviewed_runs.jsonl`、`report.md`、`summary.json` 和 `sources.audit.json`。不改原始运行文件，不覆盖已有目录。
-缺失评分不是零分；失败、取消和部分完成的运行保留在分母中。资源均值附带已知观测的覆盖数，未知 token 不参与假精确汇总。
-只有原文支持程度经过人工核对，才可以说对应结论已核验；结构校验通过只证明记录自洽。
-
-## 本地离线验收范围
-
-预算与停止场景、跨子步骤锚点冲突、最终回答引用、人工核验身份、非法/重复评分、原始文件不可变、清单 dry-run 和材料哈希都有离线回归。
-真实文献下载、模型回答质量、跨学科泛化以及独立人工评分留待单独实验，当前文档不填入未观察的成绩。
+在 `scores.blind.template.jsonl` 里按任务完成、事实正确、引用支持、输出完整四项打分（0 到 1），
+另存为 `scores.blind.jsonl`，再用 `review_results.py report` 生成带分数的报告。
+`key.private.json` 记录了哪条回答对应哪种模式，打分的人不要看这个文件。

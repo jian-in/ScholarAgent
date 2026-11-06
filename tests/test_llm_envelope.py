@@ -63,6 +63,7 @@ def test_enveloped_response_is_unwrapped_with_tool_calls_and_usage():
     assert reply["usage"] == {
         "prompt_tokens": 293, "completion_tokens": 54,
         "prompt_cache_hit_tokens": 200, "prompt_cache_miss_tokens": 93,
+        "cost": 0.0001527,
     }
 
 
@@ -81,3 +82,9 @@ def test_envelope_without_choices_still_counts_as_empty_and_retries():
 def test_malformed_envelope_is_left_for_the_empty_choices_guard():
     broken = ChatCompletion.model_construct(choices=None, data={"choices": [{"bogus": 1}]})
     assert llm._unwrap_data_envelope(broken) is broken
+
+
+def test_usage_without_cost_reports_none():
+    plain = dict(COMPLETION, usage={"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6})
+    client, _ = client_returning(ChatCompletion.model_validate(plain))
+    assert client.chat(MESSAGES)["usage"]["cost"] is None

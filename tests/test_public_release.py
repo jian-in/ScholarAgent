@@ -109,16 +109,16 @@ def test_public_release_includes_community_governance_files() -> None:
 def test_readme_leads_with_public_project_positioning() -> None:
     introduction = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")[:600]
 
-    assert "Agent 工程的透明实验台" in introduction
+    assert "科研文献调研 Agent" in introduction
     assert "毕业设计项目" not in introduction
 
 
-def test_readme_exposes_reproducible_evidence_and_project_boundaries() -> None:
+def test_readme_exposes_tests_and_contribution_entry_points() -> None:
     readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
 
     for required_text in (
         "390+ 项离线测试",
-        "尚未产出正式成本对比结论",
+        "pytest -q",
         "CONTRIBUTING.md",
         "SECURITY.md",
     ):

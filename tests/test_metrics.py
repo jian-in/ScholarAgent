@@ -68,6 +68,8 @@ def test_metrics_break_down_token_usage_by_model_role():
         "prompt_tokens": 12, "completion_tokens": 3,
         # 上游未返回缓存明细时如实为 None
         "cache_hit_tokens": None, "cache_miss_tokens": None,
+        # 服务没有在 usage 里返回费用时同样为 None,不按单价估算
+        "reported_cost": None,
     }
     assert by_role["summary"]["provider"] == "ollama"
     assert by_role["summary"]["prompt_tokens"] == 8
@@ -183,3 +185,25 @@ def test_llm_client_derives_cache_miss_for_openai_style_usage():
     reply = client.chat([{"role": "user", "content": "hi"}])
     assert reply["usage"]["prompt_cache_hit_tokens"] == 64
     assert reply["usage"]["prompt_cache_miss_tokens"] == 36
+
+
+def test_reported_cost_is_summed_only_when_every_call_reports_it():
+    """网关返回的费用逐次累加;任一次缺失就整体为 None,绝不估算。"""
+    collector = MetricsCollector("react")
+    collector.record_llm_call({"prompt_tokens": 10, "completion_tokens": 1, "cost": 0.0002},
+                              role="research")
+    collector.record_llm_call({"prompt_tokens": 20, "completion_tokens": 2, "cost": 0.0003},
+                              role="research")
+    metrics = collector.finish()
+    assert abs(metrics.reported_cost - 0.0005) < 1e-12
+    assert abs(metrics.llm_usage_by_role["research"]["reported_cost"] - 0.0005) < 1e-12
+
+    partial = MetricsCollector("react")
+    partial.record_llm_call({"prompt_tokens": 10, "completion_tokens": 1, "cost": 0.0002})
+    partial.record_llm_call({"prompt_tokens": 10, "completion_tokens": 1, "cost": None})
+    assert partial.finish().reported_cost is None
+
+    for bad in (True, -1, "0.1"):
+        odd = MetricsCollector("react")
+        odd.record_llm_call({"prompt_tokens": 1, "completion_tokens": 1, "cost": bad})
+        assert odd.finish().reported_cost is None

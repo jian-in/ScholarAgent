@@ -7,4 +7,6 @@ README 中的结论也不依赖这里的任何内容。
 |---|---|---|
 | `finetune/` | QLoRA 微调 Qwen2.5-1.5B 的脚手架（数据准备 + LLaMA-Factory 配置） | 脚手架就绪，**从未实际训练**；数据脚本已适配新路径，README 中的命令写于归档前，需把 `finetune/` 换成 `archive/finetune/` |
 | `contest/` | 参赛时的文字材料：报名简介、项目介绍、证据矩阵、演示分镜、讲解脚本等 | 反映提交当时的状态（如“200+ 项测试”），不随项目更新 |
+| `contest/demo-guide.md` | 参赛时的五分钟现场演示脚本 | 演示流程仍可参考，措辞面向评委 |
+| `核心理念与能力说明.md` | 早期写给开题、答辩讲述用的能力说明 | 内容已整理进 [`docs/features.md`](../docs/features.md) |
 | `成本感知自适应智能体路由实施计划.md` | 实现 `--auto` 路由前写的实施计划 | 已实现部分见 [`docs/routing.md`](../docs/routing.md)；实验部分仍待完成 |

@@ -54,6 +54,14 @@ def _unwrap_data_envelope(response):
         return response
 
 
+def _reported_cost(usage):
+    """读取服务在 usage 里返回的费用;非数值或缺失时返回 None。"""
+    cost = getattr(usage, "cost", None)
+    if isinstance(cost, bool) or not isinstance(cost, (int, float)) or cost < 0:
+        return None
+    return float(cost)
+
+
 def _is_retryable(exc: Exception) -> bool:
     """只有瞬时故障值得重试:401 鉴权失败、400 参数错误,重试多少次都没用。"""
     if isinstance(exc, (APIConnectionError, APITimeoutError, RateLimitError)):
@@ -173,6 +181,9 @@ class LLMClient:
                 "completion_tokens": getattr(usage, "completion_tokens", None),
                 "prompt_cache_hit_tokens": cache_hit,
                 "prompt_cache_miss_tokens": cache_miss,
+                # 部分网关(OpenRouter/Cline 等)在 usage.cost 返回本次费用;
+                # 没有就是 None,上层不做估算。
+                "cost": _reported_cost(usage),
             } if usage is not None else None,
         }
 

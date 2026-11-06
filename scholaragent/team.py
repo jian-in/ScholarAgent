@@ -7,7 +7,7 @@
 
     检索员  只管搜索与筛选,产出「检索报告」
     精读员  只管下载与精读,产出「精读笔记」
-    写作员  不碰检索与下载,只根据前两者的产出写「综述」
+    写作员  不碰检索与下载,只根据前两者的产出按任务要求写最终回答
 
 角色之间不共享对话历史,只传递书面交接物(报告/笔记)——
 这既是团队协作的朴素模型,也天然控制了每个角色的上下文规模。
@@ -31,18 +31,37 @@ SEARCHER_PROMPT = (
     "可以先用 recall 看看长期记忆里有没有已知的相关结论。"
 )
 
-READER_PROMPT = (
-    "你是论文精读员。根据检索报告,用 download_paper 下载推荐的论文,"
-    "用 read_paper 分段阅读,严格按结尾的位置参数持续翻页,直到看到全文读完。"
+_READER_COMMON = (
     "产出一份精读笔记:研究问题、方法、关键结论、局限性,注明页码;"
     "重要结论用 remember 存入长期记忆,笔记用 save_note 保存。"
     "论文里没有的内容不要编造。"
 )
 
+# 要求全文时:必须翻到工具明确返回“全文读完”(Agent 侧另有完成条件兜底)。
+READER_PROMPT = (
+    "你是论文精读员。根据检索报告,用 download_paper 下载推荐的论文,"
+    "用 read_paper 分段阅读,严格按结尾的位置参数持续翻页,直到看到全文读完。"
+    + _READER_COMMON
+)
+
+# 不要求全文时:按原始任务需要阅读。真实实验发现,若这里仍沿用“直到全文读完”,
+# 即使只是定位论文信息的任务,精读员也会逐页翻到步数预算耗尽。
+READER_PROMPT_TASK_DRIVEN = (
+    "你是论文精读员。根据检索报告,用 download_paper 下载推荐的论文,"
+    "用 read_paper 分段阅读,但只读完成原始任务所需的部分:"
+    "定位或核对论文信息(标题、作者、版本)时,读首页与必要页即可;"
+    "需要方法、实验或局限时,再按位置参数翻到相应章节。"
+    "所需信息已经取得就停止翻页,不要为读完全文而耗尽步数;"
+    "笔记里如实写明读到了哪些页、哪些部分没有读。"
+    + _READER_COMMON
+)
+
 WRITER_PROMPT = (
-    "你是综述写作员。根据检索报告和精读笔记撰写一份简明综述:"
-    "研究背景、主要方法脉络、代表工作对比、开放问题。"
-    "每篇代表论文都要交代研究问题、核心机制、实验/评价结论和局限性，"
+    "你是写作员。根据检索报告和精读笔记,按原始任务的要求写最终回答,"
+    "输出形式跟随任务而不是固定写综述:定位或核对信息的任务给出简明的核对结果;"
+    "精读任务给出研究问题、方法、关键结论和局限;比较任务给出对比;"
+    "只有任务要求综述时才写研究背景、方法脉络、代表工作对比和开放问题。"
+    "涉及代表论文时交代研究问题、核心机制、实验/评价结论和局限性，"
     "让读者能看出论文到底解决了什么，而不是只复述摘要或给出空泛趋势。"
     "每个论点注明来源论文(标题 + arXiv 编号);"
     "材料里没有的内容不要编造,材料不足就明确说明缺口。"
@@ -84,7 +103,8 @@ class ResearchTeam:
         self.reader = Agent(
             self.research_llm, registry.subset(["download_paper", "read_paper",
                                                 "save_note", "remember"]),
-            system_prompt=READER_PROMPT,
+            system_prompt=(READER_PROMPT if require_full_paper
+                           else READER_PROMPT_TASK_DRIVEN),
             max_steps=config.PAPER_READER_MAX_STEPS, verbose=verbose,
             required_tool_completions=(
                 ["read_paper"] if require_full_paper else []),
@@ -98,7 +118,7 @@ class ResearchTeam:
         self.last_metrics = None
 
     def run(self, topic: str, context: RunContext = None) -> str:
-        """围绕一个主题跑完整的调研流水线,返回综述。"""
+        """围绕一个主题跑完整的调研流水线,返回最终回答。"""
         from .agent import CANCELLED_ANSWER
 
         owns_context = context is None
@@ -133,7 +153,7 @@ class ResearchTeam:
             return context.invoke(
                 self.writer,
                 f"主题:{topic}\n\n检索报告:\n{_clip(report)}\n\n"
-                f"精读笔记:\n{_clip(notes)}\n\n请撰写综述",
+                f"精读笔记:\n{_clip(notes)}\n\n请按原始任务的要求撰写最终回答",
             )
         finally:
             self.last_metrics = (
