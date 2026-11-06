@@ -128,6 +128,37 @@ def test_team_uses_research_model_for_search_and_local_model_for_writing():
     assert "写作员" in summary.history[0][0]["content"]
 
 
+def _reader_system_prompt(require_full_paper):
+    llm = RecordingLLM([final("检索报告"), final("精读笔记" + "。" * 400), final("回答")])
+    team = ResearchTeam(llm, ToolRegistry(BUILTIN_TOOLS), verbose=False,
+                        require_full_paper=require_full_paper)
+    team.run("定位 ReAct 论文的版本信息")
+    return llm.history[1][0]["content"], llm.history[2]
+
+
+def test_reader_prompt_follows_full_paper_setting():
+    """不要求全文时,精读员提示词不能再要求“直到全文读完”。
+
+    真实实验中,配置关掉了全文强制、提示词却仍要求读完,导致定位类任务
+    也逐页翻到步数预算耗尽;提示词必须与配置一致。
+    """
+    task_driven, _ = _reader_system_prompt(require_full_paper=False)
+    assert "直到看到全文读完" not in task_driven
+    assert "停止翻页" in task_driven
+
+    full, _ = _reader_system_prompt(require_full_paper=True)
+    assert "直到看到全文读完" in full
+
+
+def test_writer_answers_the_original_task_instead_of_always_a_review():
+    _, writer_messages = _reader_system_prompt(require_full_paper=False)
+    system, handoff = writer_messages[0]["content"], writer_messages[-1]["content"]
+    assert "输出形式跟随任务" in system
+    assert "定位 ReAct 论文的版本信息" in handoff
+    assert "按原始任务的要求" in handoff
+    assert "请撰写综述" not in handoff
+
+
 if __name__ == "__main__":
     # 不依赖 pytest 的极简测试运行器
     for name, fn in sorted(globals().items()):
