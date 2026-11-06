@@ -11,9 +11,9 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from scholaragent import config
 import httpx
 
+from scholaragent import config
 from scholaragent.tool import STOP_RETRY_PREFIX
 from scholaragent.tools.arxiv_search import (
     ArxivSearchTool,

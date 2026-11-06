@@ -1,8 +1,8 @@
 """运行指标采集：记录一次执行的真实资源消耗。"""
 
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from time import perf_counter
-from typing import Mapping, Optional
 
 
 @dataclass(frozen=True)
@@ -15,11 +15,11 @@ class RunMetrics:
     mode: str
     seconds: float
     llm_calls: int
-    prompt_tokens: Optional[int]
-    completion_tokens: Optional[int]
+    prompt_tokens: int | None
+    completion_tokens: int | None
     # 前缀缓存明细(DeepSeek 兼容接口);None 表示上游未返回,绝不估算
-    cache_hit_tokens: Optional[int] = None
-    cache_miss_tokens: Optional[int] = None
+    cache_hit_tokens: int | None = None
+    cache_miss_tokens: int | None = None
     tool_calls: int = 0
     # 按模型职责保留一份 token 分解，便于核验云端调研与本地总结的成本边界。
     llm_usage_by_role: Mapping[str, Mapping] = field(default_factory=dict)
@@ -57,7 +57,7 @@ class MetricsCollector:
         """在 Auto 路由完成后，把指标归属切换到实际执行模式。"""
         self.mode = mode
 
-    def record_llm_call(self, usage: Optional[Mapping] = None, role=None,
+    def record_llm_call(self, usage: Mapping | None = None, role=None,
                         provider=None, model=None, request_attempts=1) -> None:
         self._llm_calls += 1
         self._request_attempts += request_attempts
@@ -132,11 +132,11 @@ class MetricsCollector:
     def tool_calls(self) -> int:
         return self._tool_calls
 
-    def snapshot(self, tool_calls: Optional[int] = None) -> RunMetrics:
+    def snapshot(self, tool_calls: int | None = None) -> RunMetrics:
         """返回当前观测快照，不重置采集器。"""
         return self._build_metrics(tool_calls=tool_calls)
 
-    def _build_metrics(self, tool_calls: Optional[int] = None) -> RunMetrics:
+    def _build_metrics(self, tool_calls: int | None = None) -> RunMetrics:
         usage_by_role = {
             role: {
                 "provider": bucket.get("provider"),
@@ -181,7 +181,7 @@ class MetricsCollector:
             token_accounting_complete=self._token_accounting_complete,
         )
 
-    def finish(self, tool_calls: Optional[int] = None) -> RunMetrics:
+    def finish(self, tool_calls: int | None = None) -> RunMetrics:
         return self._build_metrics(tool_calls=tool_calls)
 
 

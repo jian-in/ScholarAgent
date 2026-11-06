@@ -17,7 +17,7 @@ except UnicodeDecodeError:
     raise SystemExit(
         "读取 .env 失败:文件不是 UTF-8 编码。\n"
         "请用记事本或 VS Code 打开 .env,另存为 UTF-8 编码后重试。"
-    )
+    ) from None
 
 # 任何 OpenAI 兼容接口都可以:DeepSeek / 通义千问 / 智谱 / 本地 Ollama
 # 具体怎么换,见项目根目录的 .env.example

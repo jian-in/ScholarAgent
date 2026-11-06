@@ -7,12 +7,11 @@ import httpx
 import pytest
 from openai import APIConnectionError
 
-from scholaragent.agent import Agent, CANCELLED_ANSWER
+from scholaragent.agent import CANCELLED_ANSWER, Agent
 from scholaragent.audit import audit_run_result
-from scholaragent.evidence import EvidenceLedger
 from scholaragent.events import RunContext
+from scholaragent.evidence import EvidenceLedger
 from scholaragent.llm import LLMClient, ScriptedLLM
-from scholaragent.metrics import MetricsCollector
 from scholaragent.runtime import create_runtime
 from scholaragent.tool import Tool, ToolRegistry, ToolResult
 from scholaragent.workspace import TemporaryWorkspace

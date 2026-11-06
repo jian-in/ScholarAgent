@@ -82,7 +82,7 @@ def test_history_is_append_only():
     任何事后改写(压缩/重排)都会破坏该性质并打失效前缀缓存。
     """
     llm, _ = make_run(6)
-    for prev, curr in zip(llm.calls, llm.calls[1:]):
+    for prev, curr in zip(llm.calls, llm.calls[1:], strict=False):
         assert curr[:len(prev)] == prev, (
             "检测到历史消息被改写:请求前缀不稳定,前缀缓存将失效")
 

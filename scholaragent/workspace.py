@@ -12,7 +12,6 @@ from pathlib import Path
 
 from . import config
 
-
 _DEFAULT_POLICY = Path("data") / "router" / "policy.json"
 
 
@@ -38,7 +37,7 @@ class Workspace:
             object.__setattr__(self, "policy_path", Path(policy_path).expanduser().resolve())
 
     @classmethod
-    def from_config(cls) -> "Workspace":
+    def from_config(cls) -> Workspace:
         """从当前配置创建工作区，但不修改配置。"""
         configured = Path(config.ROUTER_POLICY_PATH)
         if configured.is_absolute():
@@ -50,7 +49,7 @@ class Workspace:
         return cls(config.DATA_DIR, policy_path=Path.cwd() / configured)
 
     @classmethod
-    def temporary(cls, root: str | Path) -> "TemporaryWorkspace":
+    def temporary(cls, root: str | Path) -> TemporaryWorkspace:
         return TemporaryWorkspace(root)
 
     @property
@@ -124,7 +123,7 @@ class LocalWorkspace(Workspace):
     """生产默认的本地文件工作区适配器。"""
 
     @classmethod
-    def from_config(cls) -> "LocalWorkspace":
+    def from_config(cls) -> LocalWorkspace:
         base = Workspace.from_config()
         return cls(base.root, policy_path=base.policy_path)
 

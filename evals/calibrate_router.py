@@ -13,17 +13,17 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 from evals.run_eval import build_runner, isolate_eval_state
-from scholaragent.runtime import detect_ollama
 from scholaragent import config
 from scholaragent.experiments import build_manifest, utc_now, write_manifest_file
 from scholaragent.metrics import MetricsCollector
 from scholaragent.routing import FEATURE_VERSION, ROUTING_MODES, TaskFeatureExtractor
+from scholaragent.runtime import detect_ollama
 
 
 def load_calibration_tasks(path):
     tasks = []
     with open(path, encoding="utf-8") as handle:
-        for line_number, line in enumerate(handle, 1):
+        for line in handle:
             line = line.strip()
             if not line or line.startswith("#"):
                 continue

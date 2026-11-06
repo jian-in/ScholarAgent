@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """生成 QLoRA 微调数据(Alpaca 格式)。
 
 用法(项目根目录):python finetune/prepare_data.py

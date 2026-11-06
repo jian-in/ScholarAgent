@@ -5,7 +5,6 @@ from statistics import mean, pstdev
 
 from .routing import FEATURE_NAMES, FEATURE_VERSION, ROUTING_MODES, empty_policy_document
 
-
 DEFAULT_WEIGHTS = {"lambda_time": 0.15, "lambda_calls": 0.10, "lambda_token": 0.0}
 
 
@@ -36,7 +35,7 @@ def _solve(matrix, target):
             factor = augmented[row][column]
             augmented[row] = [
                 value - factor * pivot_value
-                for value, pivot_value in zip(augmented[row], augmented[column])
+                for value, pivot_value in zip(augmented[row], augmented[column], strict=True)
             ]
     return [augmented[row][-1] for row in range(size)]
 
@@ -51,7 +50,7 @@ def _fit_ridge(rows, rewards, ridge):
     size = len(FEATURE_NAMES)
     covariance = [[ridge if row == column else 0.0 for column in range(size)] for row in range(size)]
     target = [0.0] * size
-    for row, reward in zip(rows, rewards):
+    for row, reward in zip(rows, rewards, strict=True):
         vector = [float(row["features"][name]) for name in FEATURE_NAMES]
         for left in range(size):
             target[left] += vector[left] * reward
@@ -106,7 +105,7 @@ def fit_policy(observations, scores=None, weights=None, ridge=1.0, seed=0, train
 
     grouped = defaultdict(list)
     rewards = defaultdict(list)
-    for row, metric, token_count in zip(rows, metrics, tokens):
+    for row, metric, token_count in zip(rows, metrics, tokens, strict=True):
         reward = (_quality(row, scores)
                   - weights["lambda_time"] * _normalize(float(metric["seconds"]), normalization["seconds"])
                   - weights["lambda_calls"] * _normalize(float(metric["llm_calls"]), normalization["llm_calls"]))

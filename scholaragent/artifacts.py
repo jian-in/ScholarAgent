@@ -5,8 +5,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 from .tool import ToolResult, adapt_tool_result
 from .workspace import Workspace, workspace_for
 
@@ -32,7 +30,7 @@ class ArtifactCollector:
         self._memory_keys: set[str] = set()
         self._read_ids: set[str] = set()
 
-    def record_result(self, tool_name: str, arguments: Optional[dict],
+    def record_result(self, tool_name: str, arguments: dict | None,
                       result: ToolResult) -> None:
         """只消费结构化成功状态与产物元数据。"""
         arguments = arguments or {}
@@ -45,7 +43,7 @@ class ArtifactCollector:
         for item in metadata:
             self._record_metadata(tool_name, arguments, item, result)
 
-    def record(self, tool_name: str, arguments: Optional[dict], result) -> None:
+    def record(self, tool_name: str, arguments: dict | None, result) -> None:
         """旧字符串入口，集中在边界处适配，供外部工具兼容。"""
         self.record_result(tool_name, arguments, adapt_tool_result(result))
 
@@ -136,7 +134,7 @@ class ArtifactCollector:
                 "path": str(metadata.get("path") or self.workspace.memory_path),
             })
 
-    def merge(self, other: "ArtifactCollector") -> None:
+    def merge(self, other: ArtifactCollector) -> None:
         if not other:
             return
         for paper in other.papers:

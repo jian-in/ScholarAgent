@@ -5,7 +5,11 @@ import time
 import unittest
 
 from scholaragent.tool import (
-    DEFAULT_TOOL_TIMEOUT, STOP_RETRY_PREFIX, Tool, ToolRegistry, ToolResult,
+    DEFAULT_TOOL_TIMEOUT,
+    STOP_RETRY_PREFIX,
+    Tool,
+    ToolRegistry,
+    ToolResult,
 )
 
 

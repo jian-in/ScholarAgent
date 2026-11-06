@@ -11,7 +11,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from scholaragent.routing import RuleRouter
 
-
 EXPECTED_MODE = {"simple": "react", "medium": "plan", "complex": "team"}
 
 

@@ -6,20 +6,19 @@
 
 from __future__ import annotations
 
-from .source_policy import SourcePolicy
-
 import inspect
 import threading
 import time
 import uuid
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, Mapping, Protocol
+from typing import Any, Protocol
 
 from .evidence import EvidenceLedger
 from .metrics import MetricsCollector
+from .source_policy import SourcePolicy
 from .workspace import Workspace, default_workspace
-
 
 EVENT_TYPES = frozenset({
     "run_started",
@@ -38,7 +37,7 @@ EVENT_TYPES = frozenset({
 
 
 class EventSink(Protocol):
-    def emit(self, event: "RunEvent") -> None:
+    def emit(self, event: RunEvent) -> None:
         ...
 
 

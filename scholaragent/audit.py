@@ -7,13 +7,13 @@ by the runtime, evaluation scripts, and post-hoc artifact verification.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
 import json
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from .evidence import ClaimEvidence, EvidenceLedger, SourceAnchor
-
 
 TERMINAL_EVENTS = frozenset({"completed", "failed", "cancelled"})
 VALID_STATUSES = frozenset({"completed", "failed", "cancelled"})

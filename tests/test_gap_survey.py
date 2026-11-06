@@ -11,7 +11,6 @@ from scholaragent.routing import RuleRouter
 from scholaragent.runtime import create_runtime
 from scholaragent.workflow import WorkflowRegistry
 
-
 GAP_TASK = """
 补齐当前研究的四项资料缺口：
 1. 推理能力，重点是 CoT、ToT 等前沿论文；

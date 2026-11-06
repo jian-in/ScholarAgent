@@ -21,11 +21,11 @@ from __future__ import annotations
 import concurrent.futures
 import importlib.metadata
 import threading
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
-from typing import Any, Mapping
+from typing import Any
 
 from .source_policy import SourceMismatch
-
 
 # 工具可用这个前缀告诉 Agent:错误来自外部服务,继续换参数调用也没有意义。
 # Agent 会在本轮后续步骤中移除该工具,避免限流/断网时陷入重试循环。
@@ -286,7 +286,7 @@ class ToolRegistry:
         return [tool.schema() for tool in self._tools.values()
                 if tool.name not in excluded]
 
-    def subset(self, names: list) -> "ToolRegistry":
+    def subset(self, names: list) -> ToolRegistry:
         """按名单挑出部分工具,组成一个新的登记处。
 
         M4 多智能体的关键机制:一个"角色" = 系统提示词 + 工具白名单。

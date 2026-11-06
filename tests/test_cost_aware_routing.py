@@ -5,7 +5,13 @@ import json
 import pytest
 
 from scholaragent.router_training import fit_policy
-from scholaragent.routing import CostAwareRouter, FEATURE_NAMES, FEATURE_VERSION, TaskFeatureExtractor, empty_policy_document
+from scholaragent.routing import (
+    FEATURE_NAMES,
+    FEATURE_VERSION,
+    CostAwareRouter,
+    TaskFeatureExtractor,
+    empty_policy_document,
+)
 
 
 def _observations():

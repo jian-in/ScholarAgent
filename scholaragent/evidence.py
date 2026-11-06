@@ -7,11 +7,11 @@
 
 from __future__ import annotations
 
-from collections import Counter
-from dataclasses import asdict, dataclass, field
-from typing import Any, Iterable, Mapping
 import re
-
+from collections import Counter
+from collections.abc import Iterable, Mapping
+from dataclasses import asdict, dataclass, field
+from typing import Any
 
 EVIDENCE_SCHEMA_VERSION = "evidence-ledger-v1"
 ANCHOR_KINDS = (
@@ -61,7 +61,7 @@ class SourceAnchor:
         object.__setattr__(self, "excerpt", _clip(self.excerpt))
 
     @classmethod
-    def from_dict(cls, value: Mapping[str, Any]) -> "SourceAnchor":
+    def from_dict(cls, value: Mapping[str, Any]) -> SourceAnchor:
         if not isinstance(value, Mapping):
             raise TypeError("来源锚点必须是对象")
         return cls(

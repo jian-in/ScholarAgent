@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import inspect
+import json
 import re
 from pathlib import Path
 
@@ -12,7 +12,6 @@ from .experiments import utc_now, write_evidence_bundle
 from .metrics import MetricsCollector
 from .routing_evaluation import QUALITY_FIELDS
 from .workspace import TemporaryWorkspace, default_workspace
-
 
 CASE_MODES = ("react", "plan", "team")
 
