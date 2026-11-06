@@ -280,6 +280,9 @@ class ToolRegistry:
                 if name in self._tools
                 and not self._tools[name].completion_ready()]
 
+    def has(self, name: str) -> bool:
+        return name in self._tools
+
     def schemas(self, exclude=None) -> list:
         """返回可用工具的 JSON Schema,可临时排除本轮已熔断的工具。"""
         excluded = set(exclude or ())
@@ -317,7 +320,7 @@ class ToolRegistry:
                 diagnostic={"kind": "unknown_tool", "name": name},
             )
         mismatch = None
-        if context is not None and name in {"download_paper", "read_paper"}:
+        if context is not None and name in {"download_paper", "read_paper", "search_paper"}:
             try:
                 arxiv_id = context.source_policy.resolve(arguments.get("arxiv_id"))
                 if context.source_policy.pinned:

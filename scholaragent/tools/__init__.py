@@ -12,7 +12,7 @@ from .calculator import CalculatorTool
 from .clock import ClockTool
 from .memory_tools import RecallTool, RememberTool
 from .notes import ReadNotesTool, SaveNoteTool
-from .papers import DownloadPaperTool, ReadPaperTool
+from .papers import DownloadPaperTool, ReadPaperTool, SearchPaperTool
 
 BUILTIN_TOOLS = [
     CalculatorTool(),
@@ -21,6 +21,7 @@ BUILTIN_TOOLS = [
     ArxivSearchTool(),
     DownloadPaperTool(),
     ReadPaperTool(),
+    SearchPaperTool(),
     SaveNoteTool(),
     ReadNotesTool(),
     # M2 记忆工具
@@ -43,6 +44,7 @@ def build_builtin_tools(workspace: Workspace | str | None = None,
         ArxivSearchTool(),
         DownloadPaperTool(workspace),
         ReadPaperTool(workspace),
+        SearchPaperTool(workspace),
         SaveNoteTool(workspace),
         ReadNotesTool(workspace),
         RememberTool(store),

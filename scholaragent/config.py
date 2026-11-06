@@ -68,6 +68,9 @@ TEAM_HANDOFF_MAX_CHARS = _positive_int("TEAM_HANDOFF_MAX_CHARS", 12000)
 # 块大于裁剪阈值时,每条结果都会经历"生成大块→裁剪定稿"的无谓浪费。
 PAPER_READER_CHUNK_CHARS = _positive_int("PAPER_READER_CHUNK_CHARS", 4800)
 PAPER_READER_MAX_STEPS = _positive_int("PAPER_READER_MAX_STEPS", 20)
+# 不要求读全文时,一次运行里 read_paper 最多调用几次;用完后提示改用 search_paper。
+# 真实实验中顺序翻页约占七成工具调用,多数步数耗尽都发生在这里。0 表示不设上限。
+READ_PAPER_CALL_LIMIT = _nonnegative_int("READ_PAPER_CALL_LIMIT", 10)
 
 # 同一工具连续失败达到该次数后,本轮自动停用(熔断),避免外部服务故障时
 # 模型反复撞墙、把 max_steps 次 LLM 调用烧光。成功一次即清零。

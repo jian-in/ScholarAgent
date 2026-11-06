@@ -26,6 +26,12 @@ DEFAULT_SYSTEM_PROMPT = (
 # 协作式取消:在下一步边界抛出,让工作台能干净收尾
 CANCELLED_ANSWER = "(任务已取消)"
 
+# 工具达到调用上限后,如果有更合适的替代工具,就把模型引导过去而不是直接收尾。
+TOOL_LIMIT_ALTERNATIVES = {
+    "read_paper": ("search_paper",
+                   "需要更多原文时改用 search_paper 按关键词检索相关段落,不要再顺序翻页。"),
+}
+
 # 工具结果定稿裁剪的标记(判断"已定稿"就靠它,保证幂等)
 COMPRESSED_MARK = "已按上下文预算裁剪"
 
@@ -322,7 +328,7 @@ class Agent:
                     tool_result = self.tools.short_circuit(
                         tool_name, tc.get("arguments") or {}, context,
                         text=(f"{STOP_RETRY_PREFIX} 工具 {tool_name} 已达到本轮调用上限 {limit} 次。"
-                              "请根据已有信息作答并说明资料缺口。"),
+                              + self._limit_advice(tool_name)),
                         diagnostic={"kind": "tool_call_limit", "limit": limit},
                         stop_retry=True,
                     )
@@ -518,6 +524,14 @@ class Agent:
     def _context_char_total(messages) -> int:
         """计入完整消息载荷，包含工具参数和多模态内容；不是 token 估算。"""
         return len(json.dumps(messages, ensure_ascii=False, default=str))
+
+    def _limit_advice(self, tool_name: str) -> str:
+        """工具达到调用上限后给模型的下一步建议;有替代工具时指向它。"""
+        alternative = TOOL_LIMIT_ALTERNATIVES.get(tool_name)
+        has_tool = getattr(self.tools, "has", None)
+        if alternative and callable(has_tool) and has_tool(alternative[0]):
+            return alternative[1]
+        return "请根据已有信息作答并说明资料缺口。"
 
     def _stop_requested(self) -> bool:
         if self._active_context is not None:

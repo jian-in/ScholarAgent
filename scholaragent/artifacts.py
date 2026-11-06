@@ -98,7 +98,7 @@ class ArtifactCollector:
             })
             return
 
-        if kind == "read" or tool_name == "read_paper":
+        if kind in {"read", "search"} or tool_name in {"read_paper", "search_paper"}:
             arxiv_id = str(metadata.get("arxiv_id") or arguments.get("arxiv_id") or "").strip()
             if not arxiv_id or arxiv_id in self._read_ids:
                 return
