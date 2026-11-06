@@ -67,6 +67,17 @@ arXiv / OpenAlex 检索结果登记 `metadata` 锚点，保留真实检索版本
 来源目录有大小限制，省略条目时明确标注；模型仍可能输出错误 ID，原有证据验证会保留错误并标为部分完成，不静默替换引用。
 这批记录依旧只是小样本诊断，正式比较需重复运行并核对材料一致性。
 
+### 执行指标汇总（不含质量）
+
+实验结束后可先生成执行层面的报告，包括执行/完整完成数、停止原因、耗时、调用、token、缓存命中率和服务返回的费用：
+
+```powershell
+.venv/Scripts/python.exe evals/summarize_runs.py --runs evals/results/research-full-v1/runs.jsonl --output evals/results/research-full-v1.execution.md
+```
+
+缺失观测不按 0 处理，均值只在已返回的观测上计算。`reported_cost` 只取服务在 `usage.cost` 中返回的值。
+如需按单价估算，用 `--price-in` / `--price-out`（美元/百万 token）显式提供单价，报告会单独标注为“上限估算，不是服务账单”。
+
 ## 4. 离线盲评与派生报告
 
 从实验 `runs.jsonl` 创建独立的评分材料：
