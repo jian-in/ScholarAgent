@@ -31,12 +31,13 @@ document are usable without it.
   features and picks ReAct, Plan or Team. Every decision records its features,
   reasons and policy version. If a learned policy is missing or corrupt, the
   router falls back to the rule-based baseline.
-- **Cost guardrails.** Older tool observations are compressed before each call
-  (in an offline paper-reading run, the context sent to the model drops below
-  50% of the uncompressed size). There are also a per-step tool-call cap, a
-  per-run character budget, LLM timeouts with exponential-backoff retries, a
-  circuit breaker for consecutive tool failures, and a cooperative soft timeout
-  shared by the CLI and the web UI.
+- **Cost guardrails.** Oversized tool results are trimmed once, when they are
+  created, to a head-and-tail final form. Request history is append-only, so the
+  prompt prefix stays byte-stable and provider-side prefix caching keeps hitting;
+  cache-hit tokens are recorded per run. There are also a per-step tool-call
+  cap, a per-run character budget, LLM timeouts with exponential-backoff
+  retries, a circuit breaker for consecutive tool failures, and a cooperative
+  soft timeout shared by the CLI and the web UI.
 - **Evidence over plausibility.** The paper reader emits page and paragraph
   anchors. Each claim in the final answer is logged in a claim–evidence ledger,
   and uncited lines, unknown citations and quotes that do not match the source

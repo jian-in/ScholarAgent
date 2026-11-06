@@ -25,7 +25,7 @@ DoD：新环境按 README 从安装到看到演示不超过 5 分钟，失败可
 
 ### 2026 Q4：可安装与可扩展
 
-- [x] `pyproject.toml` 打包候选，支持 `pip install`；版本 `v0.1.0-rc1`
+- [x] `pyproject.toml` 打包候选，支持 `pip install`；已发布 `v0.1.0`
 - [x] 工具插件接口：第三方工具可不改核心代码注册进 `ToolRegistry`
 - [ ] 评测任务集扩展：社区可提交的公开任务（含预期证据锚点）
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scholaragent"
-version = "0.1.0rc1"
+version = "0.1.0"
 description = "面向科研文献调研的透明、可复验 Agent 实验台"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
