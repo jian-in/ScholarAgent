@@ -41,9 +41,106 @@ def _pdf_path(arxiv_id: str, workspace: Workspace | str | None = None) -> str:
     return str(workspace_for(workspace).paper_path(arxiv_id))
 
 
+# 论文目录:让 Agent 先看章节和页码,再用 read_paper(start_page=...) 跳读。
+# 真实实验中 read_paper 占了约七成工具调用,多数步数耗尽都是在从头顺序翻页。
+OUTLINE_MAX_ENTRIES = 30
+OUTLINE_MAX_DEPTH = 2          # 只列到二级标题(如 3.1),三级以下省略
+OUTLINE_SCAN_MAX_PAGES = 60    # 没有书签时最多扫描多少页来识别标题
+
+_HEADING_PATTERN = re.compile(
+    r"^(?:\d+(?:\.\d+)*\.?|[A-Z]\.(?:\d+\.?)*)\s+"
+    r"[A-Z][A-Za-z0-9 ,:+\-–()/&']{2,70}$"
+)
+_NAMED_SECTIONS = {"Abstract", "References", "Acknowledgments",
+                   "Acknowledgements", "Appendix", "Bibliography"}
+
+
+def _bookmark_outline(reader):
+    """读取 PDF 书签;LaTeX + hyperref 生成的论文通常带有完整书签。"""
+    entries = []
+
+    def walk(items, depth):
+        for item in items:
+            if isinstance(item, list):
+                walk(item, depth + 1)
+                continue
+            if depth > OUTLINE_MAX_DEPTH:
+                continue
+            try:
+                page = reader.get_destination_page_number(item) + 1
+            except Exception:
+                continue
+            title = " ".join(str(getattr(item, "title", "") or "").split())
+            if title:
+                entries.append((depth, title, page))
+
+    walk(reader.outline, 1)
+    return entries
+
+
+def _heading_depth(title):
+    number = title.split(" ", 1)[0].rstrip(".")
+    return 1 + number.count(".") if number[:1].isdigit() else 1
+
+
+def _scanned_outline(reader):
+    """没有书签时,从每页文字里识别形如 “3.1. Residual Learning” 的标题行。"""
+    entries, seen = [], set()
+    for index, page in enumerate(reader.pages[:OUTLINE_SCAN_MAX_PAGES], 1):
+        try:
+            lines = (page.extract_text() or "").splitlines()
+        except Exception:
+            continue
+        for raw in lines:
+            line = " ".join(raw.split())
+            is_heading = (
+                line in _NAMED_SECTIONS
+                or (_HEADING_PATTERN.match(line) and not line.endswith(".")
+                    and len(line.split()) <= 10)
+            )
+            if not is_heading or line in seen:
+                continue
+            depth = _heading_depth(line)
+            if depth > OUTLINE_MAX_DEPTH:
+                continue
+            seen.add(line)
+            entries.append((depth, line, index))
+    return entries
+
+
+def paper_outline(reader):
+    """返回 (来源说明, [(层级, 标题, 页码), ...]);识别不出来时列表为空。"""
+    try:
+        entries = _bookmark_outline(reader)
+    except Exception:
+        entries = []
+    if entries:
+        return "来自 PDF 书签", entries
+    return "自动识别，可能不全", _scanned_outline(reader)
+
+
+def format_outline(arxiv_id, reader) -> str:
+    source, entries = paper_outline(reader)
+    if not entries:
+        return ""
+    shown = entries[:OUTLINE_MAX_ENTRIES]
+    lines = [f"\n目录({source}):"]
+    lines += [f"{'  ' * (depth - 1)}- {title} …… 第 {page} 页"
+              for depth, title, page in shown]
+    if len(entries) > len(shown):
+        lines.append(f"(其余 {len(entries) - len(shown)} 条省略)")
+    lines.append(
+        f"按任务需要用 read_paper(arxiv_id=\"{arxiv_id}\", start_page=页码) "
+        "直接跳到相关章节，信息够用就停，不必从头读完全文。")
+    return "\n".join(lines)
+
+
 class DownloadPaperTool(Tool):
     name = "download_paper"
-    description = "按 arXiv 编号下载论文 PDF 到本地。下载完成后才能用 read_paper 阅读"
+    description = (
+        "按 arXiv 编号下载论文 PDF 到本地，并返回论文目录(章节与页码)。"
+        "下载完成后才能用 read_paper 阅读"
+    )
     parameters = {
         "type": "object",
         "properties": {
@@ -83,7 +180,8 @@ class DownloadPaperTool(Tool):
             os.replace(temp_path, path)
 
         try:
-            pages = len(PdfReader(path).pages)
+            reader = PdfReader(path)
+            pages = len(reader.pages)
         except Exception as exc:
             # 缓存的 PDF 解析不了就删掉,让"重试"真正重新下载,
             # 否则这个编号会被坏文件永久卡死
@@ -91,8 +189,12 @@ class DownloadPaperTool(Tool):
             return (f"论文 {arxiv_id} 的 PDF 无法解析({type(exc).__name__}),"
                     f"已清理坏缓存,可以重新调用 download_paper 再试一次")
         size_kb = os.path.getsize(path) // 1024
+        try:
+            outline = format_outline(arxiv_id, reader)
+        except Exception:
+            outline = ""  # 目录只是导航辅助,识别失败不影响下载结果
         return (f"论文 {arxiv_id} 已就绪({size_kb} KB,共 {pages} 页),"
-                f"可以用 read_paper 开始阅读")
+                f"可以用 read_paper 开始阅读" + outline)
 
     def artifact_metadata(self, arguments, result: ToolResult):
         arxiv_id = str(arguments.get("arxiv_id") or "").strip()
@@ -111,9 +213,10 @@ class DownloadPaperTool(Tool):
 class ReadPaperTool(Tool):
     name = "read_paper"
     description = (
-        "阅读已下载论文的文字内容。每次返回一段(默认约 6000 字符);"
+        "阅读已下载论文的文字内容。每次返回一段(默认约 5000 字符);"
+        "用 start_page 可以直接跳到 download_paper 目录里的某个章节,不必从第 1 页读起;"
         "结尾会给出下一段的位置参数;同一任务内后续调用即使省略位置，"
-        "也会从上次结束处继续，直到完整读完全文。遇到没有文字层的页面会"
+        "也会从上次结束处继续。遇到没有文字层的页面会"
         "自动尝试 OCR，并用 [OCR] 标注可能存在的识别误差"
     )
     parameters = {
