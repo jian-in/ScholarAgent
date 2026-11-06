@@ -14,6 +14,7 @@ from openai import (
     OpenAI,
     RateLimitError,
 )
+from openai.types.chat import ChatCompletion
 
 from . import config
 
@@ -31,6 +32,26 @@ def _infer_provider(base_url):
     }:
         return "ollama"
     return "cloud" if normalized else "unknown"
+
+
+def _unwrap_data_envelope(response):
+    """兼容把标准响应包在 {"data": {...}} 里的 OpenAI 兼容网关。
+
+    部分聚合网关(如 Cline API)返回 {"data": <chat.completion>},SDK 解析后
+    顶层 choices 为 None、真实内容落在额外字段 data 里。这里只在顶层没有
+    choices 且 data 形如完整响应时解包,标准响应原样返回;解包失败也原样
+    返回,交给上层的空 choices 守卫按原有语义处理。
+    """
+    if getattr(response, "choices", None):
+        return response
+    extra = getattr(response, "model_extra", None) or {}
+    data = extra.get("data")
+    if not isinstance(data, dict) or not data.get("choices"):
+        return response
+    try:
+        return ChatCompletion.model_validate(data)
+    except Exception:
+        return response
 
 
 def _is_retryable(exc: Exception) -> bool:
@@ -89,11 +110,12 @@ class LLMClient:
         """只发送一次请求;所有重试共用 _request_with_guard 的预算。"""
         client = self._client_instance()
         self.last_request_attempts += 1
-        return client.chat.completions.create(
+        response = client.chat.completions.create(
             model=self.model,
             messages=messages,
             tools=tools if tools else None,
         )
+        return _unwrap_data_envelope(response)
 
     def chat(self, messages, tools=None):
         """发送整段对话历史,拿回模型的一条回复。
