@@ -1,9 +1,9 @@
 # ScholarAgent
 
-**A research-literature agent built from scratch: three execution modes (ReAct,
-plan–execute–reflect, and a multi-role team), automatic routing by task
-complexity, and a run record in which every tool call, token count and source
-citation can be traced and re-checked.**
+**A research-literature agent built from scratch.** It supports three execution
+modes (ReAct, plan–execute–reflect, and a multi-role team), can pick a mode
+automatically based on the task, and records every tool call, token cost and
+the source behind each conclusion.
 
 [![CI](https://github.com/jian-in/ScholarAgent/actions/workflows/ci.yml/badge.svg)](https://github.com/jian-in/ScholarAgent/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)
@@ -15,32 +15,45 @@ English · [中文](README.md)
 
 ![ScholarAgent local workbench](docs/images/workbench.png)
 
-## Why
+The workbench UI and the detailed docs are in Chinese; the CLI, the code and
+this page work without them.
 
-What hurts most in research is not a slow answer but an unreliable one: an
-agent that runs away and won't stop, a cost nobody can account for, or a
-conclusion that looks right but has no traceable source. ScholarAgent treats
-these as engineering problems and uses literature research as the proving
-ground. The whole framework is hand-written, with no LangChain or similar
-orchestration wrappers and only 4 runtime dependencies, so every layer can be
-read and tested.
+## Features
 
-The workbench UI and the detailed docs are currently in Chinese; the CLI, the
-code and this page work without them.
+**Three execution modes**
+- **ReAct**: think → call a tool → observe, until there is an answer. Good for simple tasks.
+- **Plan**: plan first, then execute step by step with reflection and retries, then synthesize.
+- **Team**: a searcher → reader → writer pipeline; each role only gets its own tools.
+- **`--auto`**: picks a mode from task features and explains why.
 
-## How reliability is enforced
+**Literature tools**
+- arXiv search (falls back to OpenAlex when arXiv is busy), PDF download and chunked reading.
+- Automatic OCR for scanned PDFs.
+- Research notes and long-term memory (JSONL + hand-written BM25).
 
-| Question | Mechanism | Tests |
-|---|---|---|
-| **Can it run away?** | Step fuse (including the closing step), per-step tool-call cap and per-run character budget; LLM timeouts with exponential-backoff retries; per-call tool timeout and a circuit breaker for consecutive failures; a cooperative soft timeout shared by the CLI and the web UI; tool errors go back to the model instead of crashing; when the budget runs out, a partial report is kept and marked as partial | `test_budget_caps.py` `test_llm_retry.py` `test_tool_timeout.py` `test_batch2_fixes.py` `test_completion_evidence.py` |
-| **What did it cost?** | Each run records real LLM calls, request attempts, tool calls, latency and provider-reported tokens (including cache hits); missing usage is recorded as unknown, never estimated. Oversized tool results are trimmed once, when created, and history is append-only, so the prompt prefix stays byte-stable and prefix caching keeps hitting | `test_metrics.py` `test_runtime_metrics.py` `test_context_compression.py` |
-| **Is the conclusion backed?** | The paper reader emits page and paragraph anchors. Each line of the final answer is logged in a claim–evidence ledger; uncited lines, unknown citations and quotes that don't match the source are flagged, and model output is never auto-marked as verified. Paper versions can be pinned. Scanned PDF pages go through OCR with downgraded confidence | `test_completion_evidence.py` `test_pinned_sources.py` `test_artifact_audit.py` `test_ocr.py` |
-| **Which mode should run?** | `--auto` extracts versioned task features and picks ReAct, Plan or Team, recording features, reasons and policy version. A missing or corrupt learned policy falls back to the rule-based router | `test_routing.py` `test_cost_aware_routing.py` |
+**Doesn't run away**
+- Step limits, a per-step tool-call cap and a per-run character budget.
+- LLM timeouts with exponential-backoff retries, tool timeouts, and a circuit
+  breaker for repeated tool failures.
+- When the budget runs out, it hands back a partial report saying what it got
+  and what is missing, instead of just failing.
 
-All of this is covered by **390+ offline tests** that run against a scripted
-fake model (`ScriptedLLM`), with no network access and no API spend. CI covers
-Windows and Ubuntu × Python 3.10–3.12 and smoke-tests the built wheel in a clean
-virtual environment.
+**Costs you can see**
+- Each run records LLM calls, tool calls, latency, tokens, cache hits and the
+  cost reported by the provider.
+- Oversized tool results are trimmed once, when created, and history is
+  append-only, so provider-side prefix caching keeps hitting.
+
+**Conclusions with sources**
+- The paper reader emits page-level source IDs, and every conclusion in the
+  final answer is expected to cite one.
+- Missing citations, wrong citations and quotes that don't match the source are flagged.
+- Paper versions can be pinned so the agent doesn't read the wrong version.
+
+**Also**
+- No LangChain or similar framework; only 4 runtime dependencies.
+- A local web workbench to switch modes and models (Ollama or any
+  OpenAI-compatible API) and view the event timeline and artifacts.
 
 ## Quick start
 
@@ -51,12 +64,11 @@ python -m venv .venv
 
 .venv/bin/scholaragent --demo          # offline demo, no API key needed
 .venv/bin/scholaragent-web --open      # local workbench at http://127.0.0.1:8765
-.venv/bin/python -m pytest -q          # full offline test suite
 ```
 
-For real tasks, copy `.env.example` to `.env` and configure an
-OpenAI-compatible endpoint (DeepSeek, Qwen, etc.), or run a local Ollama model,
-which is used automatically when no API key is configured.
+For real use, copy `.env.example` to `.env` and fill in an OpenAI-compatible
+base URL, key and model, or run Ollama locally (used automatically when no key
+is configured).
 
 ```bash
 scholaragent --plan "Survey the core idea of the ReAct paper and take notes"
@@ -74,7 +86,7 @@ flowchart TB
     MODE -- simple --> A
     MODE -- "complex --plan" --> P[planner.py<br>plan → execute step → reflect/retry → synthesize]
     MODE -- "full survey --team" --> T[team.py<br>searcher → reader → writer<br>role = prompt + tool allowlist]
-    MODE -- "--auto" --> R[routing.py<br>task features → rule / cost-aware router]
+    MODE -- "--auto" --> R[routing.py<br>task features → pick a mode]
     R --> A & P & T
     P --> A
     T --> A
@@ -87,42 +99,31 @@ flowchart TB
 
     A <--> L[llm.py<br>OpenAI-compatible · Ollama · ScriptedLLM]
     A <--> TL[tool.py + tools/<br>arxiv_search · download_paper · read_paper<br>notes · long-term memory · calculator · clock]
-    A <--> M[memory.py<br>session memory + JSONL long-term memory with hand-written BM25]
-    A --> E[Evidence and metering<br>evidence.py · metrics.py · audit.py]
+    A <--> M[memory.py<br>session memory + JSONL long-term memory with BM25]
+    A --> E[Sources and metering<br>evidence.py · metrics.py · audit.py]
 ```
 
-## Current evidence and limitations
+The model only decides which tool to call; execution and boundary checks are
+done by the program. Tool errors go back to the model so it can correct itself
+instead of crashing. A scripted fake model (`ScriptedLLM`) lets every test and
+demo run offline at zero cost.
 
-- The offline tests verify engineering behavior and regression boundaries.
-  They do **not** show that answers to real literature tasks reach any given
-  accuracy.
-- One public real-world case study is available: a survey of the ReAct paper,
-  run in all three modes, with answers, trajectory summaries, metrics and
-  preliminary scores. See [`docs/case-study.md`](docs/case-study.md) and
-  `evals/case_results/react-method-evidence-v1/`. Those scores are the
-  author's preliminary self-assessment.
-- A 12-task fixed-version task set, a 3-task pilot manifest and a blind-review
-  pipeline are in place. The real runs and independent scoring are still
-  pending. See [`docs/research-validation.md`](docs/research-validation.md).
-- The router, calibration, training and held-out evaluation scripts are
-  implemented, but calibration scoring, policy training and the held-out
-  comparison for the learned router are **paused**. A formal cost comparison
-  has **not** been produced, and no
-  claim is made that the learned router beats the rule baseline.
+## Testing
 
-## Documentation (Chinese)
+```bash
+.venv/bin/python -m pytest -q
+```
 
-| Doc | Contents |
-|---|---|
-| [Usage guide](docs/usage.md) | Install, run modes, local workbench, model switching |
-| [Capabilities and design](docs/features.md) | Design principles, full feature list, comparison, repo layout |
-| [Cost-aware routing](docs/routing.md) | Features, reward model, training and evaluation commands |
-| [Context cost control](docs/context-cost.md) | Finalize-at-creation pruning and prefix caching |
-| [Research validation](docs/research-validation.md) | Stop semantics, evidence chain, task set, blind review |
-| [Roadmap](docs/ROADMAP.md) · [Changelog](CHANGELOG.md) | Plans and release history |
-| [Archive](archive/) | Untrained fine-tuning scaffold, contest materials, early plans |
+- 390+ offline tests cover the agent loop, tools, memory, planning, the team
+  pipeline, routing, metrics and the workbench. They use the fake model, so no
+  network and no API cost.
+- CI runs tests and ruff on Windows and Ubuntu × Python 3.10–3.12 and
+  smoke-tests the built wheel in a clean environment.
+- The project has also been run on 12 literature tasks × 3 modes with a real
+  model, which surfaced and fixed 3 issues that only show up against real
+  providers (see [CHANGELOG.md](CHANGELOG.md)).
 
-## Contributing
+## Contributing and license
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
-Licensed under the [MIT License](LICENSE).
+Issues and PRs are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md) and
+[SECURITY.md](SECURITY.md). Licensed under the [MIT License](LICENSE).

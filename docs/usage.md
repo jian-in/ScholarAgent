@@ -26,9 +26,6 @@ OpenAI 兼容接口或运行 Ollama。当前版本为 `v0.1.0`，尚未发布到
 
 ## 快速开始
 
-> **五分钟看懂项目**：评审/演示的完整黄金路径（含离线兜底）见
-> [`docs/demo-guide.md`](demo-guide.md)；下面是逐条命令版。
-
 以下命令在 **PowerShell**(Windows 自带终端)中执行:
 
 ```powershell

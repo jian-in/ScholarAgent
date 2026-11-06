@@ -9,7 +9,7 @@
 - [ ] `.\.venv\Scripts\python.exe -m pytest -q` 全绿（当前 390+ 项）
 - [ ] `.env` 中 API Key 可用，或本机 Ollama 已运行（`main.py` 会自动探测）
 - [ ] 打开三个窗口备用：本 README、本地工作台（`start.bat`）、
-      [`docs/case-study.md`](case-study.md)
+      [`docs/case-study.md`](../../docs/case-study.md)
 - [ ] 预读一遍本指南，记住兜底切换点
 
 ## 演示流程
@@ -67,7 +67,7 @@ CLI 等价命令（备用）：
 
 ### 3:30–4:30 历史证据与评分（离线重放）
 
-打开 [`docs/case-study.md`](case-study.md)，展示三模式对比表：
+打开 [`docs/case-study.md`](../../docs/case-study.md)，展示三模式对比表：
 
 - ReAct 模式步数耗尽、未产出回答——**失败被完整保留**，这是实验台的诚实边界；
 - Plan 模式 0.945 分，含逐字引文与页号；
