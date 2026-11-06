@@ -25,6 +25,9 @@ class RunMetrics:
     llm_usage_by_role: Mapping[str, Mapping] = field(default_factory=dict)
     request_attempts: int = 0
     token_accounting_complete: bool = True
+    # 服务在 usage.cost 中返回的费用合计(如 OpenRouter/Cline 类网关,单位以服务
+    # 计费为准)。任一次成功响应缺少该字段即为 None:只记录真实返回值,绝不按单价估算。
+    reported_cost: float | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -50,6 +53,8 @@ class MetricsCollector:
         self._cache_hit_tokens = 0
         self._cache_miss_tokens = 0
         self._missing_cache = False
+        self._reported_cost = 0.0
+        self._missing_cost = False
         self._tool_calls = 0
         self._llm_usage_by_role = {}
 
@@ -77,6 +82,8 @@ class MetricsCollector:
             "cache_hit_tokens": 0,
             "cache_miss_tokens": 0,
             "missing_cache": False,
+            "reported_cost": 0.0,
+            "missing_cost": False,
         })
         bucket["llm_calls"] += 1
         if bucket.get("provider") is None and provider is not None:
@@ -87,10 +94,20 @@ class MetricsCollector:
             self._missing_prompt_tokens = True
             self._missing_completion_tokens = True
             self._missing_cache = True
+            self._missing_cost = True
             bucket["missing_prompt_tokens"] = True
             bucket["missing_completion_tokens"] = True
             bucket["missing_cache"] = True
+            bucket["missing_cost"] = True
             return
+
+        cost = usage.get("cost")
+        if isinstance(cost, (int, float)) and not isinstance(cost, bool) and cost >= 0:
+            self._reported_cost += float(cost)
+            bucket["reported_cost"] += float(cost)
+        else:
+            self._missing_cost = True
+            bucket["missing_cost"] = True
 
         prompt_tokens = usage.get("prompt_tokens")
         completion_tokens = usage.get("completion_tokens")
@@ -158,6 +175,9 @@ class MetricsCollector:
                     None if bucket["missing_cache"]
                     else bucket["cache_miss_tokens"]
                 ),
+                "reported_cost": (
+                    None if bucket["missing_cost"] else bucket["reported_cost"]
+                ),
             }
             for role, bucket in self._llm_usage_by_role.items()
         }
@@ -179,6 +199,7 @@ class MetricsCollector:
             llm_usage_by_role=usage_by_role,
             request_attempts=self._request_attempts,
             token_accounting_complete=self._token_accounting_complete,
+            reported_cost=None if self._missing_cost else self._reported_cost,
         )
 
     def finish(self, tool_calls: int | None = None) -> RunMetrics:
