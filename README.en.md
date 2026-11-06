@@ -105,7 +105,9 @@ flowchart TB
   pipeline are in place. The real runs and independent scoring are still
   pending. See [`docs/research-validation.md`](docs/research-validation.md).
 - The router, calibration, training and held-out evaluation scripts are
-  implemented. A formal cost comparison has **not** been produced yet, and no
+  implemented, but calibration scoring, policy training and the held-out
+  comparison for the learned router are **paused**. A formal cost comparison
+  has **not** been produced, and no
   claim is made that the learned router beats the rule baseline.
 
 ## Documentation (Chinese)
