@@ -1,7 +1,7 @@
 """生成 QLoRA 微调数据(Alpaca 格式)。
 
 用法(项目根目录):python finetune/prepare_data.py
-输出:finetune/data/scholar_sft.json
+输出:archive/finetune/data/scholar_sft.json
 
 样本三个来源:
     1. 内置种子样本(计划拆解 / 反思质检两类任务的标准示范)
@@ -13,7 +13,7 @@ import json
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from scholaragent.planner import PLAN_SYSTEM_PROMPT, REFLECT_SYSTEM_PROMPT
 
@@ -71,7 +71,7 @@ def main():
             "output": verdict,
         })
 
-    out_dir = os.path.join("finetune", "data")
+    out_dir = os.path.join("archive", "finetune", "data")
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, "scholar_sft.json")
     with open(out_path, "w", encoding="utf-8") as f:

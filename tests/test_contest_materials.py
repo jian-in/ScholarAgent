@@ -16,8 +16,8 @@ def test_second_case_is_a_valid_public_real_paper_definition():
 
 
 def test_contest_materials_keep_pending_experiments_explicit():
-    matrix = (ROOT / "docs" / "contest" / "证据矩阵.md").read_text(encoding="utf-8")
-    source = (ROOT / "docs" / "contest" / "项目介绍源稿.md").read_text(encoding="utf-8")
+    matrix = (ROOT / "archive" / "contest" / "证据矩阵.md").read_text(encoding="utf-8")
+    source = (ROOT / "archive" / "contest" / "项目介绍源稿.md").read_text(encoding="utf-8")
     assert "待补数据" in matrix
     assert "尚未运行" in source
     assert "独立评分" in matrix and "独立评分" in source
