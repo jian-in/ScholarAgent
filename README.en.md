@@ -119,9 +119,22 @@ demo run offline at zero cost.
   network and no API cost.
 - CI runs tests and ruff on Windows and Ubuntu × Python 3.10–3.12 and
   smoke-tests the built wheel in a clean environment.
-- The project has also been run on 12 literature tasks × 3 modes with a real
-  model, which surfaced and fixed 3 issues that only show up against real
-  providers (see [CHANGELOG.md](CHANGELOG.md)).
+- The project has also been run on 12 literature tasks × 3 modes (36 runs) with
+  a real model (`deepseek-v4.1-flash`), with **no failed or crashed runs**. This
+  surfaced and fixed 3 issues that only show up against real providers (see
+  [CHANGELOG.md](CHANGELOG.md)).
+
+| Mode | Complete answers | Median time | Avg. cost (estimated) |
+|---|---:|---:|---:|
+| ReAct | 8 / 12 | 52 s | $0.04 |
+| Plan | 3 / 12 | 4.6 min | $0.19 |
+| Team¹ | 1 / 12 | 2.4 min | $0.12 |
+
+Incomplete runs all ran out of step budget and returned a partial report, as
+designed. One run per task, answers not graded; costs are estimated from list
+prices and run high. ¹ Team data is from before a fix to its reader prompt
+(it used to read until the step budget ran out); not re-run. Full report:
+[docs/experiments/research-full-v1.md](docs/experiments/research-full-v1.md).
 
 ## Contributing and license
 
