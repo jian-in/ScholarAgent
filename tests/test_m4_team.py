@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from scholaragent.llm import ScriptedLLM
 from scholaragent.team import ResearchTeam
-from scholaragent.tool import Tool, ToolRegistry
+from scholaragent.tool import ToolRegistry
 from scholaragent.tools import BUILTIN_TOOLS
 
 

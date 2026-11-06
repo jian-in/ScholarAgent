@@ -14,7 +14,10 @@ from scholaragent.llm import ScriptedLLM
 from scholaragent.metrics import MetricsCollector
 from scholaragent.planner import Planner
 from scholaragent.tool import (
-    STOP_RETRY_PREFIX, Tool, ToolRegistry, ToolResult,
+    STOP_RETRY_PREFIX,
+    Tool,
+    ToolRegistry,
+    ToolResult,
 )
 from scholaragent.workspace import TemporaryWorkspace
 

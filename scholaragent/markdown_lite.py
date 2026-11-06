@@ -9,7 +9,6 @@ from __future__ import annotations
 import html
 import re
 
-
 _LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
 _CODE_INLINE_RE = re.compile(r"`([^`]+)`")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")

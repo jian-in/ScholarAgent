@@ -12,13 +12,13 @@ import json
 import re
 import subprocess
 from collections import Counter
+from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any
 
 from .routing_evaluation import QUALITY_FIELDS
-
 
 EXPERIMENT_SCHEMA_VERSION = "experiment-bundle-v1"
 SCORE_STATES = ("unscored", "author_scored", "independently_scored")

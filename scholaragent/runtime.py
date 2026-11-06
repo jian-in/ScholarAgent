@@ -7,14 +7,13 @@ Auto 路由。旧的 ``main.build_agent`` / ``build_runners`` 只是本模块的
 
 from __future__ import annotations
 
-import inspect
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
-from typing import Any, Callable, Mapping
+from typing import Any
 
 from .agent import CANCELLED_ANSWER, Agent
 from .artifacts import ArtifactCollector
-from .events import MemoryEventSink, RunContext, RunEvent
-from .workflow import WorkflowRegistry
+from .events import RunContext
 from .llm import LLMClient, ScriptedLLM
 from .memory import ConversationMemory, MemoryStore
 from .metrics import MetricsCollector, RunMetrics
@@ -23,8 +22,8 @@ from .routing import CostAwareRouter
 from .team import ResearchTeam
 from .tool import ToolRegistry
 from .tools import build_builtin_tools
+from .workflow import WorkflowRegistry
 from .workspace import Workspace, workspace_for
-
 
 RUNTIME_MODES = ("react", "plan", "team")
 

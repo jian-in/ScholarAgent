@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any
 
 from .gap_survey import is_gap_survey_task
-
 
 WORKFLOW_SCHEMA_VERSION = "workflow-manifest-v1"
 SOURCE_FORMATS = (
@@ -101,7 +101,7 @@ class WorkflowSpec:
         object.__setattr__(self, "references", tuple(clean_refs))
 
     @classmethod
-    def from_dict(cls, value: Mapping[str, Any]) -> "WorkflowSpec":
+    def from_dict(cls, value: Mapping[str, Any]) -> WorkflowSpec:
         required = ("name", "version", "description", "input_formats", "outputs",
                     "always_load", "references", "evidence_requirements", "validators")
         missing = [key for key in required if key not in value]
@@ -155,12 +155,12 @@ class WorkflowRegistry:
             self.register(spec)
 
     @classmethod
-    def default(cls) -> "WorkflowRegistry":
+    def default(cls) -> WorkflowRegistry:
         path = Path(__file__).with_name("workflows") / "manifests.json"
         return cls.from_path(path)
 
     @classmethod
-    def from_path(cls, path: str | Path) -> "WorkflowRegistry":
+    def from_path(cls, path: str | Path) -> WorkflowRegistry:
         manifest_path = Path(path)
         value = json.loads(manifest_path.read_text(encoding="utf-8"))
         if value.get("schema_version") != WORKFLOW_SCHEMA_VERSION:

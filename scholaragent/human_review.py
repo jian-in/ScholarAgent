@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
 import hashlib
 import json
 import math
-from pathlib import Path
 import random
+from collections import defaultdict
+from pathlib import Path
 from statistics import mean
 
 from .evidence import ClaimEvidence, EvidenceLedger, SourceAnchor
@@ -147,7 +147,7 @@ def review_summary(rows):
     for mode, group in groups.items():
         scored = [row["quality_score"] for row in group if row.get("quality_score")]
         metrics = [row.get("metrics") or {} for row in group]
-        def observed(field):
+        def observed(field, metrics=metrics, group=group):
             values = [item[field] for item in metrics if item.get(field) is not None]
             return {"mean": mean(values) if values else None, "observed": len(values), "runs": len(group)}
         qualities = {field: mean(score[field] for score in scored) if scored else None

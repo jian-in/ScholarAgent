@@ -25,14 +25,11 @@ from scholaragent.agent import Agent
 from scholaragent.events import event_message
 from scholaragent.routing import AdaptiveRunner, CostAwareRouter
 from scholaragent.runtime import (
-    DEMO_SCRIPT,
-    RESEARCH_SYSTEM_PROMPT,
     build_agent,
     build_runners,
     detect_ollama,
 )
 from scholaragent.workspace import default_workspace
-
 
 CLI_MODES = ("react", "plan", "team", "auto")
 MODE_HELP = (

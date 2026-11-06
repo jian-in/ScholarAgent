@@ -1,10 +1,8 @@
 """比赛材料只陈述可核验事实，并准备第二个真实案例。"""
 
-import json
 from pathlib import Path
 
 from scholaragent.case_study import load_case
-
 
 ROOT = Path(__file__).parents[1]
 

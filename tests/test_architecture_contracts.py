@@ -7,11 +7,10 @@ import webapp
 from evals import run_eval
 from scholaragent import config
 from scholaragent.events import MemoryEventSink, RunContext
-from scholaragent.llm import ScriptedLLM
 from scholaragent.metrics import MetricsCollector
-from scholaragent.routing import AdaptiveRunner, RoutingDecision, ROUTING_MODES
+from scholaragent.routing import ROUTING_MODES, AdaptiveRunner, RoutingDecision
 from scholaragent.runtime import RUNTIME_MODES, create_runtime
-from scholaragent.tool import Tool, ToolRegistry
+from scholaragent.tool import Tool
 from scholaragent.workspace import TemporaryWorkspace
 
 

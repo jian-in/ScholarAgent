@@ -90,7 +90,6 @@ def test_subset_shares_artifacts_collector():
 
 def test_workspace_returns_artifacts(monkeypatch):
     import webapp
-    from scholaragent.artifacts import ArtifactCollector
 
     class ArtifactRunner:
         def __init__(self):

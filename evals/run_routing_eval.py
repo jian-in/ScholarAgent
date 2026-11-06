@@ -14,10 +14,16 @@ if hasattr(sys.stdout, "reconfigure"):
 
 from evals.calibrate_router import ensure_model
 from evals.run_eval import build_runner
-from scholaragent.metrics import MetricsCollector
 from scholaragent import config
 from scholaragent.experiments import build_manifest, utc_now, write_manifest_file
-from scholaragent.routing import AdaptiveRunner, CostAwareRouter, GlobalUtilityRouter, ROUTING_MODES, RuleRouter
+from scholaragent.metrics import MetricsCollector
+from scholaragent.routing import (
+    ROUTING_MODES,
+    AdaptiveRunner,
+    CostAwareRouter,
+    GlobalUtilityRouter,
+    RuleRouter,
+)
 from scholaragent.routing_evaluation import attach_quality, write_report
 from scholaragent.workspace import TemporaryWorkspace
 

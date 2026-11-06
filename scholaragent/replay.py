@@ -9,7 +9,6 @@ from typing import Any
 
 from .markdown_lite import render_markdown
 
-
 CASE_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,79}$")
 SCORE_STATES = ("unscored", "author_scored", "independently_scored")
 

@@ -18,7 +18,6 @@ from typing import Protocol
 
 from . import config
 
-
 OCR_CONFIDENCE = ("high", "medium", "low")
 
 

@@ -5,8 +5,7 @@ from types import SimpleNamespace
 
 from pypdf import PdfWriter
 
-from scholaragent.ocr import OCRPage
-from scholaragent.ocr import TesseractOCR
+from scholaragent.ocr import OCRPage, TesseractOCR
 from scholaragent.tools.papers import ReadPaperTool
 from scholaragent.workspace import TemporaryWorkspace
 

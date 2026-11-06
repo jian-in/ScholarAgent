@@ -1,12 +1,12 @@
 """Run-level version constraints and registered-source handoff, offline."""
-import pytest
 import httpx
+import pytest
 
 from scholaragent.events import RunContext
-from scholaragent.tool import Tool, ToolRegistry
-from scholaragent.tools.arxiv_search import ArxivSearchTool
 from scholaragent.llm import ScriptedLLM
 from scholaragent.runtime import create_runtime
+from scholaragent.tool import Tool, ToolRegistry
+from scholaragent.tools.arxiv_search import ArxivSearchTool
 from scholaragent.workspace import TemporaryWorkspace
 
 
@@ -166,6 +166,7 @@ def test_empty_search_does_not_create_anchors(monkeypatch):
 
 def test_experiment_enforces_structured_task_sources(tmp_path, monkeypatch):
     import json
+
     from evals.run_experiment import execute_experiment
     downloads = []
     monkeypatch.setattr("scholaragent.tools.papers.DownloadPaperTool.run",

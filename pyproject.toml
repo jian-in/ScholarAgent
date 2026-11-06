@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scholaragent"
-version = "0.1.0rc1"
+version = "0.1.0"
 description = "面向科研文献调研的透明、可复验 Agent 实验台"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
@@ -29,6 +29,7 @@ dependencies = [
 dev = [
   "pytest>=8.0,<10",
   "build>=1.2,<2",
+  "ruff>=0.6,<1",
 ]
 
 [project.scripts]
@@ -49,3 +50,13 @@ include = ["scholaragent*"]
 [tool.setuptools.data-files]
 "web" = ["web/index.html", "web/app.js", "web/styles.css"]
 "web/assets" = ["web/assets/research-field.png"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+extend-exclude = [".venv"]
+
+[tool.ruff.lint]
+# Correctness-focused rule set: pyflakes, core pycodestyle errors, import order,
+# pyupgrade for the 3.10 floor, and bugbear for common logic bugs.
+select = ["E4", "E7", "E9", "F", "I", "UP", "B"]

@@ -4,7 +4,6 @@ import json
 from collections import Counter, defaultdict
 from statistics import mean, pstdev
 
-
 QUALITY_FIELDS = ("task_completion", "factual_correctness", "citation_validity", "output_completeness")
 
 
@@ -60,7 +59,8 @@ def write_report(rows, path):
              "|策略|运行数|质量|耗时(s)|LLM 调用|工具调用|Token|质量波动|",
              "|---|---:|---:|---:|---:|---:|---:|---:|"]
     for strategy, values in sorted(summary.items()):
-        display = lambda value: "未评分" if value is None else f"{value:.3f}"
+        def display(value):
+            return "未评分" if value is None else f"{value:.3f}"
         lines.append(
             f"| {strategy} | {values['runs']} | {display(values['quality'])} | "
             f"{values['seconds']:.3f} | {values['llm_calls']:.3f} | {values['tool_calls']:.3f} | "

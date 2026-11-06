@@ -3,7 +3,6 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PUBLIC_TEXT_SUFFIXES = {
     ".bat",
@@ -118,7 +117,7 @@ def test_readme_exposes_reproducible_evidence_and_project_boundaries() -> None:
     readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
 
     for required_text in (
-        "200+ 项离线测试",
+        "390+ 项离线测试",
         "尚未产出正式成本对比结论",
         "CONTRIBUTING.md",
         "SECURITY.md",

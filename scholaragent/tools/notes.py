@@ -10,7 +10,7 @@ Agent 每次 run() 都是全新对话(记忆系统要到 M2 才有),
 import os
 from datetime import datetime
 
-from .. import config  # 旧测试/外部工具通过此兼容属性调整默认目录
+from .. import config  # noqa: F401  旧测试/外部工具通过此兼容属性调整默认目录
 from ..tool import Tool, ToolResult
 from ..workspace import Workspace, workspace_for
 

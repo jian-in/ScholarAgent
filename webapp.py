@@ -4,24 +4,23 @@ import argparse
 import inspect
 import json
 import mimetypes
-import os
 import sys
 import threading
 import uuid
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from time import perf_counter, time
+from time import time
 from urllib.parse import urlparse
 
 from scholaragent import config
 from scholaragent.artifacts import ArtifactCollector
 from scholaragent.events import RunEvent, event_message
+from scholaragent.llm import LLMClient
 from scholaragent.markdown_lite import render_markdown
 from scholaragent.ocr import default_ocr
-from scholaragent.llm import LLMClient
-from scholaragent.routing import AdaptiveRunner, CostAwareRouter
 from scholaragent.replay import SavedCaseStore
+from scholaragent.routing import CostAwareRouter
 from scholaragent.runtime import (
     build_agent,
     build_runners,
@@ -30,7 +29,6 @@ from scholaragent.runtime import (
     list_ollama_models,
 )
 from scholaragent.workspace import TemporaryWorkspace, default_workspace
-
 
 BASE_DIR = Path(__file__).resolve().parent
 WEB_DIR = BASE_DIR / "web"
@@ -563,7 +561,6 @@ class LocalWorkspace:
 
     def run(self, task: str, mode: str, on_progress=None, should_stop=None,
             event_sink=None, model_routing=None, soft_timeout_seconds=None):
-        from scholaragent.agent import CANCELLED_ANSWER
 
         task = task.strip()
         if not task:

@@ -11,8 +11,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-from scholaragent.router_training import fit_policy
 from scholaragent import config
+from scholaragent.router_training import fit_policy
 
 
 def load_jsonl(path):

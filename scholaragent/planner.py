@@ -20,8 +20,8 @@ import json
 from . import config
 from .events import RunContext
 from .gap_survey import (
-    FAST_GAP_MAX_STEPS,
     FAST_GAP_HANDOFF_MAX_CHARS,
+    FAST_GAP_MAX_STEPS,
     FAST_GAP_TOOL_NAMES,
     GAP_HANDOFF_MAX_CHARS,
     build_gap_survey_plan,
@@ -272,7 +272,7 @@ class Planner:
                 GAP_HANDOFF_MAX_CHARS if is_gap_survey_task(task)
                 else config.PLAN_SYNTHESIS_STEP_CHARS)
         lines += [f"第{i}步({s}):\n{_clip(r, result_limit)}"
-                  for i, (s, r) in enumerate(zip(steps, results), 1)]
+                  for i, (s, r) in enumerate(zip(steps, results, strict=False), 1)]
         system_prompt = SYNTHESIZE_SYSTEM_PROMPT
         extra_instruction = synthesis_instruction(task)
         if extra_instruction:

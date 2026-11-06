@@ -13,7 +13,6 @@ from scholaragent.human_review import apply_human_review, prepare_blind_review, 
 from scholaragent.llm import ScriptedLLM
 from scholaragent.runtime import create_runtime
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -152,9 +151,10 @@ def test_experiment_preserves_actual_model_budget_and_acceptance(tmp_path):
 
 
 def test_source_snapshot_hash_uses_owned_workspace_material(tmp_path):
-    from types import SimpleNamespace
-    from scholaragent.workspace import TemporaryWorkspace
     import hashlib
+    from types import SimpleNamespace
+
+    from scholaragent.workspace import TemporaryWorkspace
 
     workspace = TemporaryWorkspace(tmp_path)
     path = workspace.paper_path("2210.03629v1")

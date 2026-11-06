@@ -5,14 +5,14 @@
     2. 在下面 import 它,并加进 BUILTIN_TOOLS 列表
 """
 
+from ..memory import MemoryStore
+from ..workspace import Workspace
 from .arxiv_search import ArxivSearchTool
 from .calculator import CalculatorTool
 from .clock import ClockTool
 from .memory_tools import RecallTool, RememberTool
 from .notes import ReadNotesTool, SaveNoteTool
 from .papers import DownloadPaperTool, ReadPaperTool
-from ..memory import MemoryStore
-from ..workspace import Workspace
 
 BUILTIN_TOOLS = [
     CalculatorTool(),

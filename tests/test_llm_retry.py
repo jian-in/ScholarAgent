@@ -5,10 +5,9 @@ from unittest.mock import Mock
 
 import httpx
 import pytest
-from openai import APIConnectionError, APITimeoutError, APIStatusError, RateLimitError
+from openai import APIConnectionError, APIStatusError, APITimeoutError, RateLimitError
 
 from scholaragent import llm
-
 
 MESSAGES = [{"role": "user", "content": "hello"}]
 

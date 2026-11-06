@@ -1,11 +1,11 @@
 """声明式科研工作流与来源格式识别的行为契约。"""
 
-from scholaragent.workflow import WorkflowRegistry, detect_source_format
 from scholaragent.evidence import EvidenceLedger
 from scholaragent.llm import ScriptedLLM
 from scholaragent.runtime import create_runtime
 from scholaragent.tool import Tool, ToolResult
 from scholaragent.tools.papers import ReadPaperTool
+from scholaragent.workflow import WorkflowRegistry, detect_source_format
 from scholaragent.workspace import TemporaryWorkspace
 
 

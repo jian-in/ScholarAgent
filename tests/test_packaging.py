@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-
 ROOT = Path(__file__).parents[1]
 
 
@@ -14,7 +13,7 @@ def test_pyproject_declares_runtime_metadata_and_two_console_scripts():
     text = path.read_text(encoding="utf-8")
     assert 'requires-python = ">=3.10,<3.13"' in text
     assert 'name = "scholaragent"' in text
-    assert 'version = "0.1.0rc1"' in text
+    assert 'version = "0.1.0"' in text
     assert 'scholaragent = "main:main"' in text
     assert 'scholaragent-web = "webapp:main"' in text
     assert "openai" in text and "httpx" in text and "pypdf" in text
@@ -38,7 +37,9 @@ def test_installed_entrypoint_targets_are_importable():
 
 
 @pytest.mark.skipif(not (ROOT / "pyproject.toml").exists(), reason="等待打包元数据")
-def test_release_candidate_version_is_pep440_compatible():
+def test_release_version_is_pep440_compatible():
     from packaging.version import Version
 
-    assert str(Version("0.1.0rc1")) == "0.1.0rc1"
+    import scholaragent
+
+    assert str(Version(scholaragent.__version__)) == "0.1.0"

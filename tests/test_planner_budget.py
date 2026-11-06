@@ -9,7 +9,6 @@ from scholaragent.llm import ScriptedLLM
 from scholaragent.planner import Planner
 from scholaragent.workspace import TemporaryWorkspace
 
-
 FAST_TASK = (
     "补齐四项资料缺口:推理能力 CoT、ToT; Agent 工具使用;"
     "2024-2025 最新进展系统性综述;硬件与推理效率优化。"

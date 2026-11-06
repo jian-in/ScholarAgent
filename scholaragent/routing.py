@@ -4,13 +4,12 @@
 训练、评测和推理对特征版本产生静默分歧。
 """
 
-import re
 import json
+import re
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
-from typing import Callable, Mapping
 
 from .gap_survey import is_gap_survey_task
-
 
 FEATURE_VERSION = "task-features-v1"
 POLICY_FORMAT_VERSION = "cost-aware-router-v1"
@@ -230,7 +229,7 @@ class CostAwareRouter:
         utility = {}
         for mode in ROUTING_MODES:
             model = self.policy["models"][mode]
-            value = sum(a * b for a, b in zip(model["coefficients"], vector))
+            value = sum(a * b for a, b in zip(model["coefficients"], vector, strict=False))
             utility[mode] = value + self.alpha * self._uncertainty(
                 vector, model.get("covariance_inverse")
             )
