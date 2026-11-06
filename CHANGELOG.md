@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+### 文档
+
+- README 精简到约 120 行，围绕“可靠性”重写：新增“可靠性怎么保证”对照表（问题 → 机制 → 复验测试）。
+  原有细节拆到 `docs/usage.md`、`docs/features.md`、`docs/routing.md`、`docs/context-cost.md`。
+- 未训练的 QLoRA 微调脚手架、参赛材料和早期路由实施计划移入 `archive/`。
+
 ## [0.1.0] - 2026-11-06
 
 首个正式版本，汇总此前的里程碑与以下变更。
