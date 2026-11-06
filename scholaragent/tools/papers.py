@@ -19,6 +19,7 @@ import httpx
 from pypdf import PdfReader
 
 from .. import config
+from ..memory import BM25Index
 from ..ocr import OCRPage, PageOCR, default_ocr
 from ..tool import Tool, ToolResult
 from ..workspace import Workspace, workspace_for
@@ -41,9 +42,107 @@ def _pdf_path(arxiv_id: str, workspace: Workspace | str | None = None) -> str:
     return str(workspace_for(workspace).paper_path(arxiv_id))
 
 
+# 论文目录:让 Agent 先看章节和页码,再用 read_paper(start_page=...) 跳读。
+# 真实实验中 read_paper 占了约七成工具调用,多数步数耗尽都是在从头顺序翻页。
+OUTLINE_MAX_ENTRIES = 30
+OUTLINE_MAX_DEPTH = 2          # 只列到二级标题(如 3.1),三级以下省略
+OUTLINE_SCAN_MAX_PAGES = 60    # 没有书签时最多扫描多少页来识别标题
+
+_HEADING_PATTERN = re.compile(
+    r"^(?:\d+(?:\.\d+)*\.?|[A-Z]\.(?:\d+\.?)*)\s+"
+    r"[A-Z][A-Za-z0-9 ,:+\-–()/&']{2,70}$"
+)
+_NAMED_SECTIONS = {"Abstract", "References", "Acknowledgments",
+                   "Acknowledgements", "Appendix", "Bibliography"}
+
+
+def _bookmark_outline(reader):
+    """读取 PDF 书签;LaTeX + hyperref 生成的论文通常带有完整书签。"""
+    entries = []
+
+    def walk(items, depth):
+        for item in items:
+            if isinstance(item, list):
+                walk(item, depth + 1)
+                continue
+            if depth > OUTLINE_MAX_DEPTH:
+                continue
+            try:
+                page = reader.get_destination_page_number(item) + 1
+            except Exception:
+                continue
+            title = " ".join(str(getattr(item, "title", "") or "").split())
+            if title:
+                entries.append((depth, title, page))
+
+    walk(reader.outline, 1)
+    return entries
+
+
+def _heading_depth(title):
+    number = title.split(" ", 1)[0].rstrip(".")
+    return 1 + number.count(".") if number[:1].isdigit() else 1
+
+
+def _scanned_outline(reader):
+    """没有书签时,从每页文字里识别形如 “3.1. Residual Learning” 的标题行。"""
+    entries, seen = [], set()
+    for index, page in enumerate(reader.pages[:OUTLINE_SCAN_MAX_PAGES], 1):
+        try:
+            lines = (page.extract_text() or "").splitlines()
+        except Exception:
+            continue
+        for raw in lines:
+            line = " ".join(raw.split())
+            is_heading = (
+                line in _NAMED_SECTIONS
+                or (_HEADING_PATTERN.match(line) and not line.endswith(".")
+                    and len(line.split()) <= 10)
+            )
+            if not is_heading or line in seen:
+                continue
+            depth = _heading_depth(line)
+            if depth > OUTLINE_MAX_DEPTH:
+                continue
+            seen.add(line)
+            entries.append((depth, line, index))
+    return entries
+
+
+def paper_outline(reader):
+    """返回 (来源说明, [(层级, 标题, 页码), ...]);识别不出来时列表为空。"""
+    try:
+        entries = _bookmark_outline(reader)
+    except Exception:
+        entries = []
+    if entries:
+        return "来自 PDF 书签", entries
+    return "自动识别，可能不全", _scanned_outline(reader)
+
+
+def format_outline(arxiv_id, reader) -> str:
+    source, entries = paper_outline(reader)
+    if not entries:
+        return ""
+    shown = entries[:OUTLINE_MAX_ENTRIES]
+    lines = [f"\n目录({source}):"]
+    lines += [f"{'  ' * (depth - 1)}- {title} …… 第 {page} 页"
+              for depth, title, page in shown]
+    if len(entries) > len(shown):
+        lines.append(f"(其余 {len(entries) - len(shown)} 条省略)")
+    lines.append(
+        f"找具体信息可以先用 search_paper(arxiv_id=\"{arxiv_id}\", query=关键词) 检索原文；"
+        f"需要连续阅读时用 read_paper(arxiv_id=\"{arxiv_id}\", start_page=页码) "
+        "直接跳到相关章节，信息够用就停，不必从头读完全文。")
+    return "\n".join(lines)
+
+
 class DownloadPaperTool(Tool):
     name = "download_paper"
-    description = "按 arXiv 编号下载论文 PDF 到本地。下载完成后才能用 read_paper 阅读"
+    description = (
+        "按 arXiv 编号下载论文 PDF 到本地，并返回论文目录(章节与页码)。"
+        "下载完成后才能用 read_paper 阅读"
+    )
     parameters = {
         "type": "object",
         "properties": {
@@ -83,7 +182,8 @@ class DownloadPaperTool(Tool):
             os.replace(temp_path, path)
 
         try:
-            pages = len(PdfReader(path).pages)
+            reader = PdfReader(path)
+            pages = len(reader.pages)
         except Exception as exc:
             # 缓存的 PDF 解析不了就删掉,让"重试"真正重新下载,
             # 否则这个编号会被坏文件永久卡死
@@ -91,8 +191,12 @@ class DownloadPaperTool(Tool):
             return (f"论文 {arxiv_id} 的 PDF 无法解析({type(exc).__name__}),"
                     f"已清理坏缓存,可以重新调用 download_paper 再试一次")
         size_kb = os.path.getsize(path) // 1024
+        try:
+            outline = format_outline(arxiv_id, reader)
+        except Exception:
+            outline = ""  # 目录只是导航辅助,识别失败不影响下载结果
         return (f"论文 {arxiv_id} 已就绪({size_kb} KB,共 {pages} 页),"
-                f"可以用 read_paper 开始阅读")
+                f"可以用 read_paper 开始阅读" + outline)
 
     def artifact_metadata(self, arguments, result: ToolResult):
         arxiv_id = str(arguments.get("arxiv_id") or "").strip()
@@ -111,9 +215,10 @@ class DownloadPaperTool(Tool):
 class ReadPaperTool(Tool):
     name = "read_paper"
     description = (
-        "阅读已下载论文的文字内容。每次返回一段(默认约 6000 字符);"
+        "阅读已下载论文的文字内容。每次返回一段(默认约 5000 字符);"
+        "用 start_page 可以直接跳到 download_paper 目录里的某个章节,不必从第 1 页读起;"
         "结尾会给出下一段的位置参数;同一任务内后续调用即使省略位置，"
-        "也会从上次结束处继续，直到完整读完全文。遇到没有文字层的页面会"
+        "也会从上次结束处继续。遇到没有文字层的页面会"
         "自动尝试 OCR，并用 [OCR] 标注可能存在的识别误差"
     )
     parameters = {
@@ -295,3 +400,165 @@ class ReadPaperTool(Tool):
         if anchors:
             metadata["source_anchors"] = anchors
         return [metadata]
+
+
+# 论文内检索:把每页切成重叠的段落,用项目自研的 BM25 排序,
+# 让 Agent 直接拿到相关原文,而不是从头一页页翻。
+PASSAGE_CHARS = 700
+PASSAGE_STRIDE = 500
+SEARCH_DEFAULT_TOP_K = 4
+SEARCH_MAX_TOP_K = 8
+
+
+def _page_passages(page_number, text):
+    text = " ".join(text.split())
+    if not text:
+        return []
+    if len(text) <= PASSAGE_CHARS:
+        return [(page_number, 0, text)]
+    passages = []
+    for start in range(0, len(text), PASSAGE_STRIDE):
+        piece = text[start:start + PASSAGE_CHARS]
+        if len(piece) < PASSAGE_CHARS // 4 and passages:
+            break  # 尾巴太短,已被上一段的重叠部分覆盖
+        passages.append((page_number, start, piece))
+        if start + PASSAGE_CHARS >= len(text):
+            break
+    return passages
+
+
+def _overlaps(chosen, page, start):
+    """同一页上与已选段落重叠的候选不再重复返回。"""
+    return any(page == p and abs(start - s) < PASSAGE_CHARS for p, s in chosen)
+
+
+class SearchPaperTool(Tool):
+    name = "search_paper"
+    description = (
+        "在已下载的论文里按关键词检索,直接返回最相关的几段原文(带页码)。"
+        "找具体信息(作者单位、某个实验结果、某个方法细节)时优先用它,"
+        "比用 read_paper 从头翻页省得多;需要上下文时再用 read_paper 读对应页。"
+        "英文论文用英文关键词更准"
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "arxiv_id": {
+                "type": "string",
+                "description": "论文的 arXiv 编号,例如 2401.12345",
+            },
+            "query": {
+                "type": "string",
+                "description": "要找的内容的关键词,例如 \"ALFWorld success rate\"",
+            },
+            "top_k": {
+                "type": "integer",
+                "description": f"返回几段,默认 {SEARCH_DEFAULT_TOP_K},最多 {SEARCH_MAX_TOP_K}",
+            },
+        },
+        "required": ["arxiv_id", "query"],
+    }
+
+    def __init__(self, workspace: Workspace | str | None = None):
+        self.workspace = workspace
+        self._indexes = {}
+        self._anchor_counter = 0
+        self._anchor_ids = {}
+
+    def start_run(self):
+        self._anchor_counter = 0
+        self._anchor_ids.clear()
+
+    def _index(self, path):
+        """按文件路径和修改时间缓存索引,同一篇论文多次检索只解析一次。"""
+        key = (path, os.path.getmtime(path))
+        cached = self._indexes.get(key)
+        if cached is not None:
+            return cached
+        reader = PdfReader(path)
+        passages, empty_pages = [], 0
+        for number, page in enumerate(reader.pages, 1):
+            try:
+                text = page.extract_text() or ""
+            except Exception:
+                text = ""
+            page_passages = _page_passages(number, text)
+            if not page_passages:
+                empty_pages += 1
+            passages.extend(page_passages)
+        index = BM25Index()
+        index.build([text for _, _, text in passages])
+        cached = (index, passages, empty_pages, len(reader.pages))
+        self._indexes = {key: cached}  # 只保留最近一篇,控制内存
+        return cached
+
+    def run(self, arxiv_id: str, query: str, top_k: int = None) -> str:
+        arxiv_id = _validate_id(arxiv_id)
+        query = str(query or "").strip()
+        if not query:
+            return "请给出要检索的关键词(query)"
+        path = _pdf_path(arxiv_id, self.workspace)
+        if not os.path.exists(path):
+            return f"论文 {arxiv_id} 还没下载,请先调用 download_paper"
+        try:
+            index, passages, empty_pages, total = self._index(path)
+        except Exception as exc:
+            return (f"论文 {arxiv_id} 的 PDF 无法解析({type(exc).__name__}),"
+                    f"请重新调用 download_paper(它会自动清理坏文件)")
+        if not passages:
+            return (f"论文 {arxiv_id} 没有可检索的文字层(可能是扫描版),"
+                    f"请改用 read_paper,它会尝试 OCR")
+
+        limit = SEARCH_DEFAULT_TOP_K if top_k is None else int(top_k)
+        limit = max(1, min(SEARCH_MAX_TOP_K, limit))
+        chosen, selected = [], []
+        for _, position in index.search(query, top_k=limit * 3):
+            page, start, text = passages[position]
+            if _overlaps(chosen, page, start):
+                continue
+            chosen.append((page, start))
+            selected.append((page, text))
+            if len(selected) == limit:
+                break
+        if not selected:
+            return (f"论文 {arxiv_id} 里没有找到和「{query}」相关的段落。"
+                    f"可以换个关键词(英文论文用英文更准),或按目录用 read_paper 阅读")
+
+        chunks = [f"在论文 {arxiv_id} 中检索「{query}」,最相关的 {len(selected)} 段:"]
+        for page, text in selected:
+            chunks.append(f"--- 第 {page} 页 ---\n{text}")
+        tail = (f"\n(只返回了相关片段;需要上下文时用 read_paper(arxiv_id=\"{arxiv_id}\","
+                f" start_page=页码) 阅读该页")
+        if empty_pages:
+            tail += f";另有 {empty_pages} 页没有文字层,未参与检索"
+        return "\n\n".join(chunks) + tail + ")"
+
+    def artifact_metadata(self, arguments, result: ToolResult):
+        arxiv_id = str(arguments.get("arxiv_id") or "").strip()
+        if not result.success or not arxiv_id:
+            return []
+        anchors = []
+        pages = list(re.finditer(r"---\s*第\s*(\d+)\s*页\s*---", result.text))
+        for position, match in enumerate(pages):
+            page = int(match.group(1))
+            end = (pages[position + 1].start() if position + 1 < len(pages)
+                   else result.text.rfind("\n(只返回了相关片段"))
+            excerpt = result.text[match.end():end if end > match.end() else None].strip()
+            key = (arxiv_id, page, excerpt[:300])
+            anchor_id = self._anchor_ids.get(key)
+            if anchor_id is None:
+                self._anchor_counter += 1
+                anchor_id = f"S{self._anchor_counter:03d}"
+                self._anchor_ids[key] = anchor_id
+            anchors.append({
+                "id": anchor_id,
+                "kind": "text",
+                "source": f"arxiv:{arxiv_id}",
+                "page": page,
+                "locator": f"pdf-page:{page}",
+                "confidence": "high",
+                "excerpt": excerpt[:300],
+            })
+        if not anchors:
+            return []
+        return [{"kind": "search", "arxiv_id": arxiv_id, "source_anchors": anchors}]

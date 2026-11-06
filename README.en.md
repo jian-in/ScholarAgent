@@ -28,6 +28,8 @@ this page work without them.
 
 **Literature tools**
 - arXiv search (falls back to OpenAlex when arXiv is busy), PDF download and chunked reading.
+- Downloads come with an outline (section → page) for jump-reading, and `search_paper` returns the
+  most relevant passages for a keyword query (using the project's own BM25).
 - Automatic OCR for scanned PDFs.
 - Research notes and long-term memory (JSONL + hand-written BM25).
 

@@ -48,7 +48,9 @@ READER_PROMPT = (
 # 即使只是定位论文信息的任务,精读员也会逐页翻到步数预算耗尽。
 READER_PROMPT_TASK_DRIVEN = (
     "你是论文精读员。根据检索报告,用 download_paper 下载推荐的论文,"
-    "用 read_paper 分段阅读,但只读完成原始任务所需的部分:"
+    "找具体信息先用 search_paper 按关键词检索原文;需要连续阅读时,"
+    "先看 download_paper 返回的目录,再用 read_paper 的 start_page 跳到相关章节,"
+    "只读完成原始任务所需的部分:"
     "定位或核对论文信息(标题、作者、版本)时,读首页与必要页即可;"
     "需要方法、实验或局限时,再按位置参数翻到相应章节。"
     "所需信息已经取得就停止翻页,不要为读完全文而耗尽步数;"
@@ -101,11 +103,15 @@ class ResearchTeam:
             tool_call_limits={"arxiv_search": 4}, on_progress=on_progress,
             should_stop=should_stop, summary_llm=self.summary_llm)
         self.reader = Agent(
-            self.research_llm, registry.subset(["download_paper", "read_paper",
+            self.research_llm, registry.subset(["download_paper", "read_paper", "search_paper",
                                                 "save_note", "remember"]),
             system_prompt=(READER_PROMPT if require_full_paper
                            else READER_PROMPT_TASK_DRIVEN),
             max_steps=config.PAPER_READER_MAX_STEPS, verbose=verbose,
+            # 要求读全文时不能限制 read_paper,否则长论文永远读不完。
+            tool_call_limits=(
+                {"read_paper": config.READ_PAPER_CALL_LIMIT}
+                if not require_full_paper and config.READ_PAPER_CALL_LIMIT else {}),
             required_tool_completions=(
                 ["read_paper"] if require_full_paper else []),
             min_final_chars=300 if require_full_paper else 0,

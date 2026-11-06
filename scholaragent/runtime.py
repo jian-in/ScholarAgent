@@ -11,6 +11,7 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from . import config
 from .agent import CANCELLED_ANSWER, Agent
 from .artifacts import ArtifactCollector
 from .events import RunContext
@@ -88,12 +89,22 @@ DEMO_SCRIPT = [
 RESEARCH_SYSTEM_PROMPT = (
     "你是一个严谨的科研文献调研助手。建议的工作流程:"
     "先用 arxiv_search 检索相关论文;需要细读时用 download_paper 下载,"
-    "再用 read_paper 分段阅读(结尾会提示下一页,可多次调用翻页);"
+    "它会返回论文目录(章节和页码);找具体信息先用 search_paper 按关键词检索原文,"
+    "需要连续阅读时再按任务需要用 read_paper 的 start_page "
+    "跳到相关章节阅读(结尾会提示下一页,可多次调用翻页),信息够用就停,不必从头读完全文;"
     "重要发现随手用 save_note 记录;任务开始时可用 read_notes 回顾之前的笔记。"
     "值得跨对话记住的结论用 remember 存入长期记忆,想不起来的事用 recall 检索。"
     "回答时必须注明信息来自哪篇论文(标题 + arXiv 编号);"
     "论文里没有的内容不要编造;遇到计算用 calculator,问时间用 current_time。"
 )
+
+
+def research_tool_limits() -> dict:
+    """ReAct 与 Plan 执行者的工具调用上限;read_paper 上限可通过配置关闭。"""
+    limits = {"arxiv_search": 4}
+    if config.READ_PAPER_CALL_LIMIT:
+        limits["read_paper"] = config.READ_PAPER_CALL_LIMIT
+    return limits
 
 
 @dataclass(frozen=True)
@@ -159,7 +170,7 @@ def assemble_runners(agent: Agent, on_progress=None, should_stop=None,
         agent.tools,
         system_prompt=RESEARCH_SYSTEM_PROMPT,
         max_steps=15,
-        tool_call_limits={"arxiv_search": 4},
+        tool_call_limits=research_tool_limits(),
         metrics_mode="plan",
         on_progress=on_progress,
         should_stop=should_stop,
@@ -360,7 +371,7 @@ class ExecutionRuntime:
             conversation=conversation if conversation is not False else None,
             long_memory=self.memory,
             auto_recall=auto_recall,
-            tool_call_limits={"arxiv_search": 4},
+            tool_call_limits=research_tool_limits(),
             summary_llm=self.summary_llm,
         )
         self.runners = assemble_runners(
