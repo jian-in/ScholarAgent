@@ -110,11 +110,12 @@ class LLMClient:
         """只发送一次请求;所有重试共用 _request_with_guard 的预算。"""
         client = self._client_instance()
         self.last_request_attempts += 1
-        response = client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            tools=tools if tools else None,
-        )
+        # 没有工具时完全省略 tools 字段,而不是发送 "tools": null:
+        # 部分网关严格校验 schema,会以 400 拒绝 null(规划/汇总这类纯文本调用)。
+        kwargs = {"model": self.model, "messages": messages}
+        if tools:
+            kwargs["tools"] = tools
+        response = client.chat.completions.create(**kwargs)
         return _unwrap_data_envelope(response)
 
     def chat(self, messages, tools=None):

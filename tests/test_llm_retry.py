@@ -122,10 +122,13 @@ def test_single_attempt_and_clamped_values(monkeypatch, max_attempts):
     sleep.assert_not_called()
 
 
-def test_request_arguments_preserved_and_empty_tools_normalized(monkeypatch):
-    client, create, _ = client_with_results(monkeypatch, [response(), response()])
+def test_request_arguments_preserved_and_empty_tools_omitted(monkeypatch):
+    # 没有工具时省略 tools 字段:部分网关会以 400 拒绝 "tools": null
+    client, create, _ = client_with_results(monkeypatch, [response(), response(), response()])
     client.chat(MESSAGES, tools=[])
-    create.assert_called_with(model="test", messages=MESSAGES, tools=None)
+    create.assert_called_with(model="test", messages=MESSAGES)
+    client.chat(MESSAGES)
+    create.assert_called_with(model="test", messages=MESSAGES)
     tools = [{"type": "function", "function": {"name": "test"}}]
     client.chat(MESSAGES, tools=tools)
     create.assert_called_with(model="test", messages=MESSAGES, tools=tools)
